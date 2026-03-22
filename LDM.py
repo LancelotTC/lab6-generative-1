@@ -60,16 +60,16 @@ AUTOENCODER_WARM_UP_N_EPOCHS = 10
 DIFFUSION_MAX_EPOCHS = 80
 DIFFUSION_VAL_INTERVAL = 40
 
-DIFFUSION_CHANNELS = (16, 24, 32)
+DIFFUSION_CHANNELS = (4, 8, 16)
 DIFFUSION_ATTENTION_LEVELS = (False, True, True)
 DIFFUSION_NUM_HEAD_CHANNELS = (0, 4, 8)
 DIFFUSION_NORM_NUM_GROUPS = pgcd(*DIFFUSION_CHANNELS)
-DIFFUSION_NUM_TRAIN_TIMESTEPS = 1000
+DIFFUSION_NUM_TRAIN_TIMESTEPS = 1200
 DIFFUSION_BETA_START = 0.0015
 DIFFUSION_BETA_END = 0.0195
 DIFFUSION_SCHEDULE = "linear_beta"
-DIFFUSION_NUM_INFERENCE_STEPS = 1000
-INTERMEDIATE_DECODE_STEPS = 100
+DIFFUSION_NUM_INFERENCE_STEPS = 1200
+INTERMEDIATE_DECODE_STEPS = DIFFUSION_NUM_TRAIN_TIMESTEPS // 10
 INTERPOLATION_STEPS = 64
 
 LATENT_SAMPLE_SHAPE = (1, LATENT_CHANNELS, 16, 16)
@@ -427,9 +427,9 @@ class LDMTraining:
 
 class LDMVisualization:
     @staticmethod
-    def save_autoencoder_training_plots(run_dir: Path, metrics: dict[str, list[float]]) -> None:
+    def save_autoencoder_training_plots(plots_dir: Path, metrics: dict[str, list[float]]) -> None:
         save_metric_panels(
-            output_path=run_dir / "autoencoder_training_metrics.png",
+            output_path=plots_dir / "autoencoder_training_metrics.png",
             panel_titles=("Reconstruction", "Generator", "Discriminator"),
             panel_values=(
                 metrics["epoch_recon_losses"],
@@ -447,7 +447,7 @@ class LDMVisualization:
                 AUTOENCODER_VAL_INTERVAL,
             )
             save_two_curve_plot(
-                output_path=run_dir / "autoencoder_train_vs_val_reconstruction.png",
+                output_path=plots_dir / "autoencoder_train_vs_val_reconstruction.png",
                 x_values=x_values,
                 y_values_1=[metrics["epoch_recon_losses"][epoch - 1] for epoch in x_values],
                 y_values_2=metrics["val_recon_losses"],
@@ -457,10 +457,23 @@ class LDMVisualization:
                 y_label="Loss",
             )
 
+        if ADVERSARIAL_WEIGHT > 0:
+            x_values = np.arange(1, len(metrics["epoch_gen_losses"]) + 1)
+            save_two_curve_plot(
+                output_path=plots_dir / "adversarial_training_curves.png",
+                x_values=x_values,
+                y_values_1=metrics["epoch_gen_losses"],
+                y_values_2=metrics["epoch_disc_losses"],
+                label_1="Generator",
+                label_2="Discriminator",
+                title="Adversarial Training Curves",
+                y_label="Loss",
+            )
+
     @staticmethod
-    def save_diffusion_training_plots(run_dir: Path, metrics: dict[str, list[float]]) -> None:
+    def save_diffusion_training_plots(plots_dir: Path, metrics: dict[str, list[float]]) -> None:
         save_metric_panels(
-            output_path=run_dir / "diffusion_training_metrics.png",
+            output_path=plots_dir / "diffusion_training_metrics.png",
             panel_titles=("Diffusion Train Loss",),
             panel_values=(metrics["epoch_losses"],),
             y_label="MSE",
@@ -474,7 +487,7 @@ class LDMVisualization:
                 DIFFUSION_VAL_INTERVAL,
             )
             save_two_curve_plot(
-                output_path=run_dir / "diffusion_train_vs_val.png",
+                output_path=plots_dir / "diffusion_train_vs_val.png",
                 x_values=x_values,
                 y_values_1=[metrics["epoch_losses"][epoch - 1] for epoch in x_values],
                 y_values_2=metrics["val_losses"],
@@ -506,7 +519,7 @@ class LDMVisualization:
         autoencoder: AutoencoderKL,
         valid_loader: DataLoader,
         device: torch.device,
-        run_dir: Path,
+        plots_dir: Path,
     ) -> None:
         autoencoder.eval()
         dataiter = iter(valid_loader)
@@ -520,7 +533,7 @@ class LDMVisualization:
 
         save_animation_as_gif(
             images=images,
-            filename=run_dir / "mednist_interpolation.gif",
+            filename=plots_dir / "mednist_interpolation.gif",
             interval=100,
         )
 
@@ -531,7 +544,7 @@ class LDMVisualization:
         inferer: LatentDiffusionInferer,
         scheduler: LDMScheduler,
         device: torch.device,
-        run_dir: Path,
+        plots_dir: Path,
     ) -> None:
         amp_enabled = device.type == "cuda"
 
@@ -560,7 +573,7 @@ class LDMVisualization:
         plt.imshow(chain[0, 0].detach().cpu(), vmin=0, vmax=1, cmap="gray")
         plt.tight_layout()
         plt.axis("off")
-        plt.savefig(run_dir / "decoded_intermediates_every_100_steps.png", dpi=300, bbox_inches="tight")
+        plt.savefig(plots_dir / "decoded_intermediates_every_100_steps.png", dpi=300, bbox_inches="tight")
         plt.close()
 
 
@@ -569,6 +582,10 @@ if __name__ == "__main__":
 
     ensure_model_type_directories()
     run_dir = create_run_directory("LDM")
+    plots_dir = run_dir / "plots"
+    models_dir = run_dir / "models"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    models_dir.mkdir(parents=True, exist_ok=True)
     run_start_time = time.perf_counter()
 
     train_loader, valid_loader, _ = get_mednist_dataloaders()
@@ -647,9 +664,9 @@ if __name__ == "__main__":
         scaler_d=scaler_d,
         device=device,
     )
-    LDMVisualization.save_autoencoder_training_plots(run_dir, autoencoder_metrics)
+    LDMVisualization.save_autoencoder_training_plots(plots_dir, autoencoder_metrics)
 
-    torch.save(autoencoder.state_dict(), run_dir / "autoencoderkl_for_diffusion_state_dict.pth")
+    torch.save(autoencoder.state_dict(), models_dir / "autoencoderkl_for_diffusion_state_dict.pth")
 
     del discriminator
     del perceptual_loss_fn
@@ -677,21 +694,21 @@ if __name__ == "__main__":
         scaler=scaler_unet,
         device=device,
     )
-    LDMVisualization.save_diffusion_training_plots(run_dir, diffusion_metrics)
+    LDMVisualization.save_diffusion_training_plots(plots_dir, diffusion_metrics)
 
-    torch.save(unet.state_dict(), run_dir / "diffusion_model_unet_state_dict.pth")
+    torch.save(unet.state_dict(), models_dir / "diffusion_model_unet_state_dict.pth")
 
     latent_vectors = collect_latent_vectors(valid_loader, device, autoencoder.encode)
     save_latent_space_plot(
         latent_vectors=latent_vectors,
-        output_path=run_dir / "latent_space_2d.png",
+        output_path=plots_dir / "latent_space_2d.png",
         title="LDM Autoencoder Latent Space (t-SNE 2D)",
     )
     LDMVisualization.save_mednist_interpolation_gif(
         autoencoder=autoencoder,
         valid_loader=valid_loader,
         device=device,
-        run_dir=run_dir,
+        plots_dir=plots_dir,
     )
     LDMVisualization.save_decoded_intermediates_strip(
         autoencoder=autoencoder,
@@ -699,7 +716,7 @@ if __name__ == "__main__":
         inferer=inferer,
         scheduler=scheduler,
         device=device,
-        run_dir=run_dir,
+        plots_dir=plots_dir,
     )
 
     generated_sample = LDMTraining.sample_image(
@@ -709,7 +726,7 @@ if __name__ == "__main__":
         scheduler=scheduler,
         device=device,
     )
-    torch.save(generated_sample.detach().cpu(), run_dir / "generated_sample.pt")
+    torch.save(generated_sample.detach().cpu(), models_dir / "generated_sample.pt")
 
     metrics = {
         "scale_factor": scale_factor,

@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
@@ -359,7 +360,7 @@ class GANVisualization:
         return [img.squeeze().detach().cpu().numpy() for img in synthetic_interp]
 
     @staticmethod
-    def save_training_plots(run_dir: Path, metrics: dict[str, Any]) -> None:
+    def save_training_plots(plots_dir: Path, metrics: dict[str, Any]) -> None:
         panel_titles = (
             "Training loss curve",
             "Reconstruction metric",
@@ -376,7 +377,7 @@ class GANVisualization:
         )
 
         save_metric_panels(
-            output_path=run_dir / "training_metrics.png",
+            output_path=plots_dir / "training_metrics.png",
             panel_titles=panel_titles,
             panel_values=panel_values,
             y_label="Loss",
@@ -389,7 +390,7 @@ class GANVisualization:
             discriminator_values = [x / ADVERSARIAL_WEIGHT for x in metrics["train_discriminator_loss"]]
 
             save_two_curve_plot(
-                output_path=run_dir / "adversarial_training_curves.png",
+                output_path=plots_dir / "adversarial_training_curves.png",
                 x_values=x_values,
                 y_values_1=generator_values,
                 y_values_2=discriminator_values,
@@ -400,16 +401,35 @@ class GANVisualization:
             )
 
     @staticmethod
+    def save_decoded_intermediates_strip(images: list[np.ndarray], output_path: Path) -> None:
+        sample_count = 11
+
+        if len(images) <= sample_count:
+            selected_images = images
+        else:
+            selected_indices = np.linspace(0, len(images) - 1, sample_count, dtype=int)
+            selected_images = [images[idx] for idx in selected_indices]
+
+        chain = np.concatenate(selected_images, axis=1)
+
+        plt.figure(figsize=(10, 2))
+        plt.imshow(chain, vmin=0, vmax=1, cmap="gray")
+        plt.tight_layout()
+        plt.axis("off")
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close()
+
+    @staticmethod
     def run_post_training_visualizations(
         model: AutoencoderKL,
         test_loader: DataLoader,
         device: torch.device,
-        run_dir: Path,
+        plots_dir: Path,
     ) -> None:
         latent_vectors = collect_latent_vectors(test_loader, device, model.encode)
         save_latent_space_plot(
             latent_vectors=latent_vectors,
-            output_path=run_dir / "latent_space_2d.png",
+            output_path=plots_dir / "latent_space_2d.png",
             title="GAN Latent Space (t-SNE 2D)",
         )
 
@@ -432,9 +452,13 @@ class GANVisualization:
         latent_2, _ = model.encode(inputs[4].unsqueeze(0))
 
         images = GANVisualization.interpolate_images(model, latent_1, latent_2, device, steps=64)
-        filename = run_dir / "mednist_interpolation.gif"
+        filename = plots_dir / "mednist_interpolation.gif"
 
         save_animation_as_gif(images, filename=filename, interval=100)
+        GANVisualization.save_decoded_intermediates_strip(
+            images=images,
+            output_path=plots_dir / "decoded_intermediates_every_100_steps.png",
+        )
         display(Image(filename=str(filename)))
 
 
@@ -443,6 +467,10 @@ if __name__ == "__main__":
 
     ensure_model_type_directories()
     run_dir = create_run_directory("GAN")
+    plots_dir = run_dir / "plots"
+    models_dir = run_dir / "models"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+    models_dir.mkdir(parents=True, exist_ok=True)
     run_start_time = time.perf_counter()
 
     train_loader, valid_loader, test_loader = get_mednist_dataloaders()
@@ -508,13 +536,13 @@ if __name__ == "__main__":
     )
 
     model.load_state_dict(best_model)
-    torch.save(best_model, run_dir / "best_test_lossmodel.pth")
+    torch.save(best_model, models_dir / "best_test_lossmodel.pth")
 
     print(
         f"Best model selected at epoch {training_metrics['best_epoch']} with validation loss: {training_metrics['best_valid_metric']:.6f}"
     )
 
-    GANVisualization.save_training_plots(run_dir, training_metrics)
+    GANVisualization.save_training_plots(plots_dir, training_metrics)
 
     test_metric = GANTraining.evaluate_test_reconstruction(
         model=model,
@@ -533,7 +561,7 @@ if __name__ == "__main__":
         model=model,
         test_loader=test_loader,
         device=device,
-        run_dir=run_dir,
+        plots_dir=plots_dir,
     )
 
     metrics["run_duration_seconds"] = time.perf_counter() - run_start_time
