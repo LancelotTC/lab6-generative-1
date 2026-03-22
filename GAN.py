@@ -34,15 +34,15 @@ OUT_CHANNELS = 1
 
 # Feature widths of the encoder/decoder blocks.
 # Increasing these usually improves expressiveness but increases memory and training time.
-CHANNELS = (16, 24, 32)
+CHANNELS = (8, 16, 32)
 
 # Number of latent channels produced by the encoder.
 # This controls how much information can be compressed in z.
-LATENT_CHANNELS = 16
+LATENT_CHANNELS = 24
 
 # Number of residual blocks per resolution stage in the autoencoder.
 # More blocks can improve quality, but make training heavier.
-NUM_RES_BLOCKS = 2
+NUM_RES_BLOCKS = 3
 
 # GroupNorm groups used inside the model.
 # Using the first channel count is MONAI's common stable default for this setup.
@@ -52,7 +52,12 @@ NORM_NUM_GROUPS = pgcd(*CHANNELS)
 # Kept disabled here because this MedNIST setup works well without attention overhead.
 ATTENTION_LEVELS = (False, False, False)
 
+WITH_ENCODER_NONLOCAL_ATTN = False
+WITH_DECODER_NONLOCAL_ATTN = False
+
+# "Hidden layers" of the discriminator
 NUM_LAYERS_D = 3
+# Doubles for each block until the last, where it is squashed back to 1 (1x6x6 for 36 patches)
 DISCRIMINATOR_CHANNELS = 16
 
 LEARNING_RATE_G = 1e-4
@@ -64,13 +69,15 @@ KL_WEIGHT = 1e-6
 
 # Weight for perceptual similarity.
 # Balances low-level pixel reconstruction with higher-level feature similarity.
-PERCEPTUAL_WEIGHT = 1e-3
+PERCEPTUAL_WEIGHT = 1e-2
 
 # Weight for adversarial realism pressure.
 # Too high can destabilize training; too low can make outputs blurry.
-ADVERSARIAL_WEIGHT = 1e-2
+ADVERSARIAL_WEIGHT = 1e-1
 
 SAVE_BEST_MODEL_FROM_METRIC = True
+INTERPOLATION_STEPS = 64
+INTERMEDIATE_DECODE_STEPS = INTERPOLATION_STEPS // 20
 
 
 class GANComponents:
@@ -86,6 +93,8 @@ class GANComponents:
                 num_res_blocks=NUM_RES_BLOCKS,
                 norm_num_groups=NORM_NUM_GROUPS,
                 attention_levels=ATTENTION_LEVELS,
+                with_encoder_nonlocal_attn=WITH_ENCODER_NONLOCAL_ATTN,
+                with_decoder_nonlocal_attn=WITH_DECODER_NONLOCAL_ATTN,
             )
 
         model.to(device)
@@ -401,23 +410,37 @@ class GANVisualization:
             )
 
     @staticmethod
-    def save_decoded_intermediates_strip(images: list[np.ndarray], output_path: Path) -> None:
-        sample_count = 11
+    def save_decoded_intermediates_strip(
+        images: list[np.ndarray],
+        output_path: Path,
+        intermediate_decode_steps: int,
+    ) -> None:
+        if not images:
+            raise ValueError("No images available to build decoded intermediates plot.")
 
-        if len(images) <= sample_count:
-            selected_images = images
-        else:
-            selected_indices = np.linspace(0, len(images) - 1, sample_count, dtype=int)
-            selected_images = [images[idx] for idx in selected_indices]
+        step = max(1, intermediate_decode_steps)
+        selected_indices = list(range(0, len(images), step))
+        if selected_indices[-1] != len(images) - 1:
+            selected_indices.append(len(images) - 1)
+        selected_images = [images[idx] for idx in selected_indices]
 
-        chain = np.concatenate(selected_images, axis=1)
+        max_columns = 10
+        rows = int(np.ceil(len(selected_images) / max_columns))
+        columns = int(np.ceil(len(selected_images) / rows))
 
-        plt.figure(figsize=(10, 2))
-        plt.imshow(chain, vmin=0, vmax=1, cmap="gray")
-        plt.tight_layout()
-        plt.axis("off")
-        plt.savefig(output_path, dpi=300, bbox_inches="tight")
-        plt.close()
+        figure, axes = plt.subplots(rows, columns, figsize=(columns * 1.7, rows * 1.7))
+        axes_array = np.array(axes, ndmin=1).ravel()
+
+        for index, image in enumerate(selected_images):
+            axes_array[index].imshow(image, vmin=0, vmax=1, cmap="gray")
+            axes_array[index].axis("off")
+
+        for index in range(len(selected_images), len(axes_array)):
+            axes_array[index].axis("off")
+
+        figure.tight_layout()
+        figure.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close(figure)
 
     @staticmethod
     def run_post_training_visualizations(
@@ -451,13 +474,20 @@ class GANVisualization:
         latent_1, _ = model.encode(inputs[2].unsqueeze(0))
         latent_2, _ = model.encode(inputs[4].unsqueeze(0))
 
-        images = GANVisualization.interpolate_images(model, latent_1, latent_2, device, steps=64)
-        filename = plots_dir / "mednist_interpolation.gif"
+        images = GANVisualization.interpolate_images(
+            model=model,
+            latent_1=latent_1,
+            latent_2=latent_2,
+            device=device,
+            steps=INTERPOLATION_STEPS,
+        )
+        filename = plots_dir / "MedNIST Interpolation.gif"
 
         save_animation_as_gif(images, filename=filename, interval=100)
         GANVisualization.save_decoded_intermediates_strip(
             images=images,
             output_path=plots_dir / "GAN - Decoded Intermediates Every 100 Steps.png",
+            intermediate_decode_steps=INTERMEDIATE_DECODE_STEPS,
         )
         display(Image(filename=str(filename)))
 

@@ -34,9 +34,9 @@ IN_CHANNELS = 1
 OUT_CHANNELS = 1
 
 # AutoencoderKL channels for latent compression before diffusion.
-AUTOENCODER_CHANNELS = (16, 24, 32)
-LATENT_CHANNELS = 16
-NUM_RES_BLOCKS = 2
+AUTOENCODER_CHANNELS = (8, 16, 32)
+LATENT_CHANNELS = 24
+NUM_RES_BLOCKS = 3
 NORM_NUM_GROUPS = pgcd(*AUTOENCODER_CHANNELS)
 ATTENTION_LEVELS = (False, False, False)
 WITH_ENCODER_NONLOCAL_ATTN = False
@@ -50,8 +50,8 @@ DISCRIMINATOR_LEARNING_RATE = 5e-4
 DIFFUSION_LEARNING_RATE = 1e-4
 
 KL_WEIGHT = 1e-6
-PERCEPTUAL_WEIGHT = 1e-3
-ADVERSARIAL_WEIGHT = 1e-2
+PERCEPTUAL_WEIGHT = 1e-2
+ADVERSARIAL_WEIGHT = 1e-1
 
 AUTOENCODER_MAX_EPOCHS = 60
 AUTOENCODER_VAL_INTERVAL = 10
@@ -60,16 +60,16 @@ AUTOENCODER_WARM_UP_N_EPOCHS = 10
 DIFFUSION_MAX_EPOCHS = 80
 DIFFUSION_VAL_INTERVAL = 40
 
-DIFFUSION_CHANNELS = (4, 8, 16)
+DIFFUSION_CHANNELS = (16, 24, 32)
 DIFFUSION_ATTENTION_LEVELS = (False, True, True)
-DIFFUSION_NUM_HEAD_CHANNELS = (0, 4, 8)
+DIFFUSION_NUM_HEAD_CHANNELS = (0, 8, 16)
 DIFFUSION_NORM_NUM_GROUPS = pgcd(*DIFFUSION_CHANNELS)
-DIFFUSION_NUM_TRAIN_TIMESTEPS = 1200
+DIFFUSION_NUM_TRAIN_TIMESTEPS = 1000
 DIFFUSION_BETA_START = 0.0015
 DIFFUSION_BETA_END = 0.0195
 DIFFUSION_SCHEDULE = "linear_beta"
-DIFFUSION_NUM_INFERENCE_STEPS = 1200
-INTERMEDIATE_DECODE_STEPS = DIFFUSION_NUM_TRAIN_TIMESTEPS // 10
+DIFFUSION_NUM_INFERENCE_STEPS = 1000
+INTERMEDIATE_DECODE_STEPS = DIFFUSION_NUM_TRAIN_TIMESTEPS // 20
 INTERPOLATION_STEPS = 64
 
 LATENT_SAMPLE_SHAPE = (1, LATENT_CHANNELS, 16, 16)
@@ -533,7 +533,7 @@ class LDMVisualization:
 
         save_animation_as_gif(
             images=images,
-            filename=plots_dir / "mednist_interpolation.gif",
+            filename=plots_dir / "MedNIST Interpolation.gif",
             interval=100,
         )
 
@@ -567,18 +567,30 @@ class LDMVisualization:
         for intermediate_image in intermediates:
             decoded_images.append(intermediate_image)
 
-        chain = torch.cat(decoded_images, dim=-1)
+        if not decoded_images:
+            raise ValueError("No decoded intermediates were returned by the inferer.")
 
-        plt.figure(figsize=(10, 12))
-        plt.imshow(chain[0, 0].detach().cpu(), vmin=0, vmax=1, cmap="gray")
-        plt.tight_layout()
-        plt.axis("off")
-        plt.savefig(
+        max_columns = 10
+        rows = int(np.ceil(len(decoded_images) / max_columns))
+        columns = int(np.ceil(len(decoded_images) / rows))
+
+        figure, axes = plt.subplots(rows, columns, figsize=(columns * 1.7, rows * 1.7))
+        axes_array = np.array(axes, ndmin=1).ravel()
+
+        for index, image in enumerate(decoded_images):
+            axes_array[index].imshow(image[0, 0].detach().cpu(), vmin=0, vmax=1, cmap="gray")
+            axes_array[index].axis("off")
+
+        for index in range(len(decoded_images), len(axes_array)):
+            axes_array[index].axis("off")
+
+        figure.tight_layout()
+        figure.savefig(
             plots_dir / "Diffusion Model - Decoded Intermediates Every 100 Steps.png",
             dpi=300,
             bbox_inches="tight",
         )
-        plt.close()
+        plt.close(figure)
 
 
 if __name__ == "__main__":

@@ -3,9 +3,9 @@ from pathlib import Path
 
 # Shared training/data constants
 COMMON_NUM_EPOCHS: int = 60
-BATCH_SIZE: int = 64
+BATCH_SIZE: int = 32
 IMAGE_SIZE: int = 64
-TRAIN_VALID_RATIO: float = 0.8
+TRAIN_VALID_RATIO: float = 0.95
 MIN_INTENSITY_VALUE: float = 0.0
 MAX_INTENSITY_VALUE: float = 1.0
 NUM_WORKERS: int = 0 if os.name == "nt" else 4
