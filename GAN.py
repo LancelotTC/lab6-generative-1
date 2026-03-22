@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-from IPython.display import Image, display
 from monai.data import DataLoader
 from monai.losses import PatchAdversarialLoss, PerceptualLoss
 from monai.networks.layers import Act
@@ -489,7 +488,6 @@ class GANVisualization:
             output_path=plots_dir / "GAN - Decoded Intermediates Every 100 Steps.png",
             intermediate_decode_steps=INTERMEDIATE_DECODE_STEPS,
         )
-        display(Image(filename=str(filename)))
 
 
 if __name__ == "__main__":
