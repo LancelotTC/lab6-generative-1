@@ -11,7 +11,7 @@ import torchvision
 from monai.apps import MedNISTDataset
 from monai.data import DataLoader, Dataset
 from monai.losses import PerceptualLoss
-from monai.transforms import Compose, EnsureChannelFirstd, LoadImaged, Resized, ScaleIntensityRanged
+from monai.transforms import Compose, EnsureChannelFirstd, LoadImaged, RandAffined, Resized, ScaleIntensityRanged
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from torch.utils.data import random_split
@@ -64,7 +64,7 @@ def get_mednist_dataloaders(
         if item["class_name"] == selected_label
     ]
 
-    transforms = [
+    base_transforms = [
         LoadImaged(keys=["image"]),
         EnsureChannelFirstd(keys=["image"]),
         ScaleIntensityRanged(
@@ -78,29 +78,50 @@ def get_mednist_dataloaders(
         Resized(keys=["image"], spatial_size=[image_size, image_size]),
     ]
 
-    train_dataset = Dataset(data=train_datalist, transform=Compose(transforms))
-    test_data = Dataset(data=test_datalist, transform=Compose(transforms))
+    train_transforms = Compose(
+        base_transforms
+        + [
+            RandAffined(
+                keys=["image"],
+                rotate_range=[(-np.pi / 36, np.pi / 36), (-np.pi / 36, np.pi / 36)],
+                translate_range=[(-1, 1), (-1, 1)],
+                scale_range=[(-0.05, 0.05), (-0.05, 0.05)],
+                spatial_size=[image_size, image_size],
+                padding_mode="zeros",
+                prob=0.5,
+            ),
+        ]
+    )
+    eval_transforms = Compose(base_transforms)
 
-    train_size = int(train_valid_ratio * len(train_dataset))
-    valid_size = len(train_dataset) - train_size
-    train_data, valid_data = random_split(train_dataset, [train_size, valid_size])
+    train_size = int(train_valid_ratio * len(train_datalist))
+    valid_size = len(train_datalist) - train_size
+    split_generator = torch.Generator().manual_seed(SEED)
+    train_subset, valid_subset = random_split(train_datalist, [train_size, valid_size], generator=split_generator)
+
+    train_data = [train_datalist[index] for index in train_subset.indices]
+    valid_data = [train_datalist[index] for index in valid_subset.indices]
+
+    train_dataset = Dataset(data=train_data, transform=train_transforms)
+    valid_dataset = Dataset(data=valid_data, transform=eval_transforms)
+    test_dataset = Dataset(data=test_datalist, transform=eval_transforms)
 
     train_loader = DataLoader(
-        train_data,
+        train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
         persistent_workers=num_workers > 0,
     )
     valid_loader = DataLoader(
-        valid_data,
+        valid_dataset,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
         persistent_workers=num_workers > 0,
     )
     test_loader = DataLoader(
-        test_data,
+        test_dataset,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
@@ -227,6 +248,21 @@ def save_latent_space_plot(
     plt.title(title)
     plt.xlabel("Component 1")
     plt.ylabel("Component 2")
+
+    x_coords = embedding_2d[:, 0]
+    y_coords = embedding_2d[:, 1]
+    min_axis = min(float(x_coords.min()), float(y_coords.min()))
+    max_axis = max(float(x_coords.max()), float(y_coords.max()))
+    axis_span = max_axis - min_axis
+    axis_padding = 0.05 * axis_span if axis_span > 0 else 1.0
+    axis_min = min_axis - axis_padding
+    axis_max = max_axis + axis_padding
+
+    ax = plt.gca()
+    ax.set_xlim(axis_min, axis_max)
+    ax.set_ylim(axis_min, axis_max)
+    ax.set_aspect("equal", adjustable="box")
+
     plt.tight_layout()
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close()

@@ -1,6 +1,7 @@
 import contextlib
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -8,7 +9,7 @@ from monai.data import DataLoader
 from monai.inferers import LatentDiffusionInferer
 from monai.losses import PatchAdversarialLoss, PerceptualLoss
 from monai.networks.nets import AutoencoderKL, DiffusionModelUNet, PatchDiscriminator
-from monai.networks.schedulers import DDPMScheduler
+from monai.networks.schedulers import DDPMScheduler as LDMScheduler
 from monai.utils import first
 from torch.amp import GradScaler, autocast
 from torchinfo import summary
@@ -25,7 +26,7 @@ from common import (
     save_two_curve_plot,
 )
 from settings import BATCH_SIZE, IMAGE_SIZE, TRAIN_VALID_RATIO
-from utils import create_run_directory, ensure_model_type_directories, save_json
+from utils import create_run_directory, ensure_model_type_directories, save_animation_as_gif, save_json
 
 SPATIAL_DIMS = 2
 IN_CHANNELS = 1
@@ -66,6 +67,8 @@ DIFFUSION_BETA_START = 0.0015
 DIFFUSION_BETA_END = 0.0195
 DIFFUSION_SCHEDULE = "linear_beta"
 DIFFUSION_NUM_INFERENCE_STEPS = 1000
+INTERMEDIATE_DECODE_STEPS = 100
+INTERPOLATION_STEPS = 64
 
 LATENT_SAMPLE_SHAPE = (1, LATENT_CHANNELS, 16, 16)
 
@@ -115,8 +118,8 @@ class LDMComponents:
         )
 
     @staticmethod
-    def build_scheduler() -> DDPMScheduler:
-        return DDPMScheduler(
+    def build_scheduler() -> LDMScheduler:
+        return LDMScheduler(
             num_train_timesteps=DIFFUSION_NUM_TRAIN_TIMESTEPS,
             schedule=DIFFUSION_SCHEDULE,
             beta_start=DIFFUSION_BETA_START,
@@ -399,7 +402,7 @@ class LDMTraining:
         autoencoder: AutoencoderKL,
         unet: DiffusionModelUNet,
         inferer: LatentDiffusionInferer,
-        scheduler: DDPMScheduler,
+        scheduler: LDMScheduler,
         device: torch.device,
     ) -> torch.Tensor:
         amp_enabled = device.type == "cuda"
@@ -479,12 +482,91 @@ class LDMVisualization:
                 y_label="MSE",
             )
 
+    @staticmethod
+    def interpolate_latents(
+        autoencoder: AutoencoderKL,
+        latent_1: torch.Tensor,
+        latent_2: torch.Tensor,
+        device: torch.device,
+        steps: int = INTERPOLATION_STEPS,
+    ) -> list[np.ndarray]:
+        latent_1 = latent_1.to(device)
+        latent_2 = latent_2.to(device)
+        t_values = torch.linspace(0, 1, steps, device=device)
+
+        latent_interp = torch.stack([torch.lerp(latent_1, latent_2, t).squeeze(0) for t in t_values], dim=0)
+        decoded_interp = autoencoder.decode(latent_interp)
+
+        return [img.squeeze().detach().cpu().numpy() for img in decoded_interp]
+
+    @staticmethod
+    def save_mednist_interpolation_gif(
+        autoencoder: AutoencoderKL,
+        valid_loader: DataLoader,
+        device: torch.device,
+        run_dir: Path,
+    ) -> None:
+        autoencoder.eval()
+        dataiter = iter(valid_loader)
+        batch_data: BatchData = next(dataiter)
+        inputs = batch_data["image"].to(device)
+
+        with torch.no_grad():
+            latent_1, _ = autoencoder.encode(inputs[2].unsqueeze(0))
+            latent_2, _ = autoencoder.encode(inputs[4].unsqueeze(0))
+            images = LDMVisualization.interpolate_latents(autoencoder, latent_1, latent_2, device)
+
+        save_animation_as_gif(
+            images=images,
+            filename=run_dir / "mednist_interpolation.gif",
+            interval=100,
+        )
+
+    @staticmethod
+    def save_decoded_intermediates_strip(
+        autoencoder: AutoencoderKL,
+        unet: DiffusionModelUNet,
+        inferer: LatentDiffusionInferer,
+        scheduler: LDMScheduler,
+        device: torch.device,
+        run_dir: Path,
+    ) -> None:
+        amp_enabled = device.type == "cuda"
+
+        unet.eval()
+        scheduler.set_timesteps(num_inference_steps=DIFFUSION_NUM_INFERENCE_STEPS)
+        noise = torch.randn(LATENT_SAMPLE_SHAPE, device=device)
+
+        with torch.no_grad():
+            with autocast(device.type, enabled=amp_enabled):
+                _, intermediates = inferer.sample(
+                    input_noise=noise,
+                    diffusion_model=unet,
+                    scheduler=scheduler,
+                    save_intermediates=True,
+                    intermediate_steps=INTERMEDIATE_DECODE_STEPS,
+                    autoencoder_model=autoencoder,
+                )
+
+        decoded_images: list[torch.Tensor] = []
+        for intermediate_image in intermediates:
+            decoded_images.append(intermediate_image)
+
+        chain = torch.cat(decoded_images, dim=-1)
+
+        plt.figure(figsize=(10, 12))
+        plt.imshow(chain[0, 0].detach().cpu(), vmin=0, vmax=1, cmap="gray")
+        plt.tight_layout()
+        plt.axis("off")
+        plt.savefig(run_dir / "decoded_intermediates_every_100_steps.png", dpi=300, bbox_inches="tight")
+        plt.close()
+
 
 if __name__ == "__main__":
     print_library_versions()
 
     ensure_model_type_directories()
-    run_dir = create_run_directory("DDPM")
+    run_dir = create_run_directory("LDM")
 
     train_loader, valid_loader, _ = get_mednist_dataloaders()
 
@@ -509,7 +591,7 @@ if __name__ == "__main__":
     scaler_d = GradScaler(device.type, enabled=amp_enabled)
 
     hyperparameters = {
-        "model_type": "DDPM",
+        "model_type": "LDM",
         "common": {
             "batch_size": BATCH_SIZE,
             "image_size": IMAGE_SIZE,
@@ -600,6 +682,20 @@ if __name__ == "__main__":
         latent_vectors=latent_vectors,
         output_path=run_dir / "latent_space_2d.png",
         title="LDM Autoencoder Latent Space (t-SNE 2D)",
+    )
+    LDMVisualization.save_mednist_interpolation_gif(
+        autoencoder=autoencoder,
+        valid_loader=valid_loader,
+        device=device,
+        run_dir=run_dir,
+    )
+    LDMVisualization.save_decoded_intermediates_strip(
+        autoencoder=autoencoder,
+        unet=unet,
+        inferer=inferer,
+        scheduler=scheduler,
+        device=device,
+        run_dir=run_dir,
     )
 
     generated_sample = LDMTraining.sample_image(

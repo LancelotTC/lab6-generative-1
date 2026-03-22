@@ -10,6 +10,7 @@ from monai.data import DataLoader
 from monai.losses import PatchAdversarialLoss, PerceptualLoss
 from monai.networks.layers import Act
 from monai.networks.nets import AutoencoderKL, PatchDiscriminator
+from tqdm.auto import tqdm
 from torchinfo import summary
 
 from common import (
@@ -35,7 +36,7 @@ CHANNELS = (16, 32, 64)
 
 # Number of latent channels produced by the encoder.
 # This controls how much information can be compressed in z.
-LATENT_CHANNELS = 3
+LATENT_CHANNELS = 6
 
 # Number of residual blocks per resolution stage in the autoencoder.
 # More blocks can improve quality, but make training heavier.
@@ -57,7 +58,7 @@ LEARNING_RATE_D = 5e-4
 
 # Weight for the latent KL regularization term.
 # Larger values force latent distributions closer to N(0, I), but can hurt reconstruction fidelity.
-KL_WEIGHT = 1e-6
+KL_WEIGHT = 1e-5
 
 # Weight for perceptual similarity.
 # Balances low-level pixel reconstruction with higher-level feature similarity.
@@ -65,9 +66,10 @@ PERCEPTUAL_WEIGHT = 1e-3
 
 # Weight for adversarial realism pressure.
 # Too high can destabilize training; too low can make outputs blurry.
-ADVERSARIAL_WEIGHT = 1e-2
+ADVERSARIAL_WEIGHT = 1e-1
 
 SAVE_BEST_MODEL_FROM_METRIC = True
+
 
 class GANComponents:
     @staticmethod
@@ -196,9 +198,14 @@ class GANTraining:
             perceptual_metric = 0.0
             adversarial_metric = 0.0
 
-            for raw_batch_data in train_loader:
+            seen_samples = 0
+            progress_bar = tqdm(enumerate(train_loader), total=len(train_loader), ncols=110)
+            progress_bar.set_description(f"Epoch {epoch}")
+
+            for step, raw_batch_data in progress_bar:
                 batch_data: BatchData = raw_batch_data
                 inputs = batch_data["image"].to(device)
+                seen_samples += inputs.size(0)
 
                 optimizer_generator.zero_grad()
 
@@ -247,6 +254,16 @@ class GANTraining:
                     optimizer_discriminator.step()
 
                     train_discriminator_loss += loss_discriminator.item() * inputs.size(0)
+
+                progress_bar.set_postfix(
+                    {
+                        "recons_loss": reconstruction_metric / seen_samples,
+                        "gen_loss": train_generator_loss / seen_samples,
+                        "disc_loss": (train_discriminator_loss / seen_samples) if ADVERSARIAL_WEIGHT > 0 else 0.0,
+                    }
+                )
+
+            progress_bar.close()
 
             train_generator_loss_list.append(train_generator_loss / len(train_loader.dataset))
             reconstruction_metric_list.append(reconstruction_metric / len(train_loader.dataset))
