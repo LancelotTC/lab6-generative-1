@@ -18,7 +18,6 @@ from torch.utils.data import random_split
 
 from settings import (
     BATCH_SIZE,
-    COMMON_TSNE_RANDOM_STATE,
     DATA_ROOT_DIR,
     IMAGE_SIZE,
     MAX_INTENSITY_VALUE,
@@ -29,6 +28,7 @@ from settings import (
     NUM_WORKERS,
     SEED,
     SELECTED_LABEL,
+    TSNE_RANDOM_STATE,
     TRAIN_VALID_RATIO,
 )
 
@@ -216,7 +216,7 @@ def save_latent_space_plot(
     latent_vectors: np.ndarray,
     output_path: Path,
     title: str,
-    random_state: int = COMMON_TSNE_RANDOM_STATE,
+    random_state: int = TSNE_RANDOM_STATE,
 ) -> np.ndarray:
     if latent_vectors.ndim != 2:
         raise ValueError("latent_vectors must be a 2D array of shape [n_samples, n_features].")

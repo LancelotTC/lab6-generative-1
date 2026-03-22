@@ -24,59 +24,40 @@ from common import (
     save_metric_panels,
     save_two_curve_plot,
 )
-from settings import BATCH_SIZE, COMMON_NUM_EPOCHS, IMAGE_SIZE, TRAIN_VALID_RATIO
+from settings import (
+    ADVERSARIAL_WEIGHT,
+    ATTENTION_LEVELS,
+    AUTOENCODER_CHANNELS,
+    AUTOENCODER_LEARNING_RATE,
+    BATCH_SIZE,
+    DISCRIMINATOR_CHANNELS,
+    DISCRIMINATOR_LEARNING_RATE,
+    DISCRIMINATOR_NUM_LAYERS_D,
+    IMAGE_SIZE,
+    IN_CHANNELS,
+    INTERMEDIATE_DECODE_DIVISOR,
+    INTERPOLATION_STEPS,
+    KL_WEIGHT,
+    LATENT_CHANNELS,
+    NUM_EPOCHS,
+    NUM_RES_BLOCKS,
+    OUT_CHANNELS,
+    PERCEPTUAL_WEIGHT,
+    SPATIAL_DIMS,
+    TRAIN_VALID_RATIO,
+    WITH_DECODER_NONLOCAL_ATTN,
+    WITH_ENCODER_NONLOCAL_ATTN,
+)
 from utils import create_run_directory, ensure_model_type_directories, save_animation_as_gif, save_json, pgcd
-
-SPATIAL_DIMS = 2
-IN_CHANNELS = 1
-OUT_CHANNELS = 1
-
-# Feature widths of the encoder/decoder blocks.
-# Increasing these usually improves expressiveness but increases memory and training time.
-CHANNELS = (8, 16, 32)
-
-# Number of latent channels produced by the encoder.
-# This controls how much information can be compressed in z.
-LATENT_CHANNELS = 24
-
-# Number of residual blocks per resolution stage in the autoencoder.
-# More blocks can improve quality, but make training heavier.
-NUM_RES_BLOCKS = 3
 
 # GroupNorm groups used inside the model.
 # Using the first channel count is MONAI's common stable default for this setup.
-NORM_NUM_GROUPS = pgcd(*CHANNELS)
-
-# Attention toggles per resolution level.
-# Kept disabled here because this MedNIST setup works well without attention overhead.
-ATTENTION_LEVELS = (False, False, False)
-
-WITH_ENCODER_NONLOCAL_ATTN = False
-WITH_DECODER_NONLOCAL_ATTN = False
+NORM_NUM_GROUPS = pgcd(*AUTOENCODER_CHANNELS)
 
 # "Hidden layers" of the discriminator
-NUM_LAYERS_D = 3
 # Doubles for each block until the last, where it is squashed back to 1 (1x6x6 for 36 patches)
-DISCRIMINATOR_CHANNELS = 16
-
-LEARNING_RATE_G = 1e-4
-LEARNING_RATE_D = 5e-4
-
-# Weight for the latent KL regularization term.
-# Larger values force latent distributions closer to N(0, I), but can hurt reconstruction fidelity.
-KL_WEIGHT = 1e-6
-
-# Weight for perceptual similarity.
-# Balances low-level pixel reconstruction with higher-level feature similarity.
-PERCEPTUAL_WEIGHT = 1e-2
-
-# Weight for adversarial realism pressure.
-# Too high can destabilize training; too low can make outputs blurry.
-ADVERSARIAL_WEIGHT = 1e-1
-
 SAVE_BEST_MODEL_FROM_METRIC = True
-INTERPOLATION_STEPS = 64
-INTERMEDIATE_DECODE_STEPS = INTERPOLATION_STEPS // 20
+INTERMEDIATE_DECODE_STEPS = INTERPOLATION_STEPS // INTERMEDIATE_DECODE_DIVISOR
 
 
 class GANComponents:
@@ -87,7 +68,7 @@ class GANComponents:
                 spatial_dims=SPATIAL_DIMS,
                 in_channels=IN_CHANNELS,
                 out_channels=OUT_CHANNELS,
-                channels=CHANNELS,
+                channels=AUTOENCODER_CHANNELS,
                 latent_channels=LATENT_CHANNELS,
                 num_res_blocks=NUM_RES_BLOCKS,
                 norm_num_groups=NORM_NUM_GROUPS,
@@ -104,7 +85,7 @@ class GANComponents:
         with contextlib.redirect_stdout(None):
             discriminator = PatchDiscriminator(
                 spatial_dims=SPATIAL_DIMS,
-                num_layers_d=NUM_LAYERS_D,
+                num_layers_d=DISCRIMINATOR_NUM_LAYERS_D,
                 channels=DISCRIMINATOR_CHANNELS,
                 in_channels=IN_CHANNELS,
                 out_channels=OUT_CHANNELS,
@@ -194,7 +175,7 @@ class GANTraining:
         best_model: dict[str, torch.Tensor] | None = None
         best_epoch = 0
 
-        for epoch in range(COMMON_NUM_EPOCHS):
+        for epoch in range(NUM_EPOCHS):
             model.train()
             discriminator.train()
 
@@ -393,7 +374,7 @@ class GANVisualization:
         )
 
         if ADVERSARIAL_WEIGHT > 0 and metrics["train_discriminator_loss"]:
-            x_values = np.linspace(1, COMMON_NUM_EPOCHS, COMMON_NUM_EPOCHS)
+            x_values = np.linspace(1, NUM_EPOCHS, NUM_EPOCHS)
             generator_values = [x / ADVERSARIAL_WEIGHT for x in metrics["adversarial_metric"]]
             discriminator_values = [x / ADVERSARIAL_WEIGHT for x in metrics["train_discriminator_loss"]]
 
@@ -518,13 +499,13 @@ if __name__ == "__main__":
 
     perceptual_loss_fn, adversarial_loss_fn, l1_loss_fn = GANComponents.build_losses(device)
 
-    optimizer_generator = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE_G)
-    optimizer_discriminator = torch.optim.Adam(discriminator.parameters(), lr=LEARNING_RATE_D)
+    optimizer_generator = torch.optim.Adam(model.parameters(), lr=AUTOENCODER_LEARNING_RATE)
+    optimizer_discriminator = torch.optim.Adam(discriminator.parameters(), lr=DISCRIMINATOR_LEARNING_RATE)
 
     hyperparameters = {
         "model_type": "GAN",
         "common": {
-            "epochs": COMMON_NUM_EPOCHS,
+            "epochs": NUM_EPOCHS,
             "batch_size": BATCH_SIZE,
             "image_size": IMAGE_SIZE,
             "train_valid_ratio": TRAIN_VALID_RATIO,
@@ -533,15 +514,15 @@ if __name__ == "__main__":
             "spatial_dims": SPATIAL_DIMS,
             "in_channels": IN_CHANNELS,
             "out_channels": OUT_CHANNELS,
-            "channels": CHANNELS,
+            "channels": AUTOENCODER_CHANNELS,
             "latent_channels": LATENT_CHANNELS,
             "num_res_blocks": NUM_RES_BLOCKS,
             "norm_num_groups": NORM_NUM_GROUPS,
             "attention_levels": ATTENTION_LEVELS,
-            "num_layers_d": NUM_LAYERS_D,
+            "num_layers_d": DISCRIMINATOR_NUM_LAYERS_D,
             "discriminator_channels": DISCRIMINATOR_CHANNELS,
-            "learning_rate_g": LEARNING_RATE_G,
-            "learning_rate_d": LEARNING_RATE_D,
+            "learning_rate_g": AUTOENCODER_LEARNING_RATE,
+            "learning_rate_d": DISCRIMINATOR_LEARNING_RATE,
             "kl_weight": KL_WEIGHT,
             "perceptual_weight": PERCEPTUAL_WEIGHT,
             "adversarial_weight": ADVERSARIAL_WEIGHT,
