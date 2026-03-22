@@ -1,485 +1,521 @@
-# This contains imports and the loading of the data necessary in all three approaches
-from common import *
+import contextlib
+from pathlib import Path
+from typing import Any
 
-# Parameters
-spatial_dims = 2
-in_channels = 1
-out_channels = 1
-channels = (16, 32, 64)
-latent_channels = 3
-num_res_blocks = 2
-norm_num_groups = channels[0]
-attention_levels = (False, False, False)
+import numpy as np
+import torch
+import torch.nn as nn
+from IPython.display import Image, display
+from monai.data import DataLoader
+from monai.losses import PatchAdversarialLoss, PerceptualLoss
+from monai.networks.layers import Act
+from monai.networks.nets import AutoencoderKL, PatchDiscriminator
+from torchinfo import summary
 
-##
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+from common import (
+    BatchData,
+    build_alex_perceptual_loss,
+    collect_latent_vectors,
+    get_mednist_dataloaders,
+    print_library_versions,
+    save_latent_space_plot,
+    save_metric_panels,
+    save_two_curve_plot,
+)
+from settings import BATCH_SIZE, COMMON_NUM_EPOCHS, IMAGE_SIZE, TRAIN_VALID_RATIO
+from utils import create_run_directory, ensure_model_type_directories, save_animation_as_gif, save_json
 
-# use of the with command line to avoid the automatic display of log information during the instanciation of the class model
-with contextlib.redirect_stdout(None):
-    model = AutoencoderKL(
-        spatial_dims=spatial_dims,
-        in_channels=in_channels,
-        out_channels=out_channels,
-        channels=channels,
-        latent_channels=latent_channels,
-        num_res_blocks=num_res_blocks,
-        norm_num_groups=norm_num_groups,
-        attention_levels=attention_levels,
-    )
-    model.to(device)
+SPATIAL_DIMS = 2
+IN_CHANNELS = 1
+OUT_CHANNELS = 1
 
-### Discriminator
+# Feature widths of the encoder/decoder blocks.
+# Increasing these usually improves expressiveness but increases memory and training time.
+CHANNELS = (16, 32, 64)
 
-# Parameters
-spatial_dims = 2
-in_channels = 1
-out_channels = 1
-num_layers_d = 3
-channels = 16
+# Number of latent channels produced by the encoder.
+# This controls how much information can be compressed in z.
+LATENT_CHANNELS = 3
 
-# use of the with command line to avoid the automatic display of log information during the instanciation of the class model
-with contextlib.redirect_stdout(None):
-    discriminator = PatchDiscriminator(
-        spatial_dims=spatial_dims,
-        num_layers_d=num_layers_d,
-        channels=channels,
-        in_channels=in_channels,
-        out_channels=out_channels,
-        activation=(Act.LEAKYRELU, {"negative_slope": 0.2}),
-        norm="BATCH",
-        bias=False,
-        padding=1,
-    )
-    discriminator.to(device)
+# Number of residual blocks per resolution stage in the autoencoder.
+# More blocks can improve quality, but make training heavier.
+NUM_RES_BLOCKS = 2
 
-# Print the summary of the network
-summary_kwargs = dict(col_names=["input_size", "output_size", "num_params"], depth=3, verbose=0)
-summary(discriminator, (1, 1, image_size, image_size), device="cpu", **summary_kwargs)
+# GroupNorm groups used inside the model.
+# Using the first channel count is MONAI's common stable default for this setup.
+NORM_NUM_GROUPS = CHANNELS[0]
 
+# Attention toggles per resolution level.
+# Kept disabled here because this MedNIST setup works well without attention overhead.
+ATTENTION_LEVELS = (False, False, False)
 
-## Specify loss and optimization functions
-learning_rate_g = 1e-4
-learning_rate_d = 5e-4
+NUM_LAYERS_D = 3
+DISCRIMINATOR_CHANNELS = 16
 
-p_loss = PerceptualLoss(spatial_dims=2, network_type="alex")
-p_loss.to(device)
-adv_loss = PatchAdversarialLoss(criterion="least_squares")
-p_loss.to(device)
-l1_loss = nn.L1Loss()
-l1_loss.to(device)
+LEARNING_RATE_G = 1e-4
+LEARNING_RATE_D = 5e-4
 
+# Weight for the latent KL regularization term.
+# Larger values force latent distributions closer to N(0, I), but can hurt reconstruction fidelity.
+KL_WEIGHT = 1e-6
 
-def vae_gaussian_kl_loss(mu, sigma):
-    kl_loss = 0.5 * torch.sum(mu.pow(2) + sigma.pow(2) - torch.log(sigma.pow(2)) - 1, dim=[1, 2, 3])
-    kl_loss = torch.sum(kl_loss) / kl_loss.shape[0]
-    return kl_loss
+# Weight for perceptual similarity.
+# Balances low-level pixel reconstruction with higher-level feature similarity.
+PERCEPTUAL_WEIGHT = 1e-3
 
+# Weight for adversarial realism pressure.
+# Too high can destabilize training; too low can make outputs blurry.
+ADVERSARIAL_WEIGHT = 1e-2
 
-def reconstruction_loss(x_reconstructed, x):
-    return l1_loss(x_reconstructed.float(), x.float())
+SAVE_BEST_MODEL_FROM_METRIC = True
 
-
-def perceptual_loss(x_reconstructed, x):
-    return p_loss(x_reconstructed.float(), x.float())
-
-
-def loss_function(recon_x, x, mu, sigma, kl_weight, p_weight, a_weight, logits, target_is_real, for_discriminator):
-    recon_loss = reconstruction_loss(recon_x, x)
-    kld_loss = vae_gaussian_kl_loss(mu, sigma)
-    p_loss = perceptual_loss(recon_x, x)
-    a_loss = adv_loss(logits, target_is_real=target_is_real, for_discriminator=for_discriminator)
-    return (
-        recon_loss + kl_weight * kld_loss + p_weight * p_loss + a_weight * a_loss,
-        recon_loss.item(),
-        kl_weight * kld_loss.item(),
-        p_weight * p_loss.item(),
-        a_weight * a_loss.item(),
-    )
-
-
-# Specify optimizers
-optimizer_generator = torch.optim.Adam(model.parameters(), lr=learning_rate_g)
-optimizer_discriminator = torch.optim.Adam(params=discriminator.parameters(), lr=learning_rate_d)
-
-
-### Training of the adversarial network
-
-
-def train():
-    # Number of epochs to train the model
-    n_epochs = 120
-    kl_weight = 1e-6  # KL divergence weight loss  / default monai value: 1e-6
-    perceptual_weight = 1e-3  # Perceptual weight for loss / default monai value: 1e-3
-    adversarial_weight = 1e-2  # Adversarial weight for generator loss / default monai value 1e-2
-
-    # Move the model to the device
-    model.to(device)
-    discriminator.to(device)
-
-    # Lists to store loss and accuracy for each epoch
-    train_generator_loss_list = []
-    train_discriminator_loss_list = []
-    valid_metric_list = []
-    reconstruction_metric_list = []
-    kld_metric_list = []
-    perceptual_metric_list = []
-    adversarial_metric_list = []
-
-    save_best_model_from_metric = True
-    best_valid_metric = float("inf")  # to track the best validation mesasure
-    best_model = None  # to store the best model
-    best_epoch = 0  # to track the epoch number of the best model
-
-    model.train()  # prepare model for training
-
-    for epoch in range(n_epochs):
-        # monitor training loss
-        model.train()  # ensure the model is in training mode
-        discriminator.train()
-        train_generator_loss = 0
-        train_discriminator_loss = 0
-        reconstruction_metric = 0
-        kld_metric = 0
-        perceptual_metric = 0
-        adversarial_metric = 0
-
-        ################################
-        # train the adversarial models #
-        ################################
-        for batch_data in train_loader:
-
-            ###################
-            # Generator part
-            ###################
-
-            # Load data and target samples stored the current batch_data
-            inputs = batch_data["image"].to(device)
-            # clear the gradients of all optimized variables
-            optimizer_generator.zero_grad()
-            # forward pass: compute predicted outputs by passing inputs to the model
-            reconstruction, z_mu, z_sigma = model(inputs)
-            # predict fake logits
-            logits_fake = discriminator(reconstruction.contiguous().float())[-1]
-            # calculate the generator loss
-            loss_generator, reconstruction_val, kld_val, perceptual_val, adversarial_val = loss_function(
-                reconstruction,
-                inputs,
-                z_mu,
-                z_sigma,
-                kl_weight,
-                perceptual_weight,
-                adversarial_weight,
-                logits_fake,
-                target_is_real=True,
-                for_discriminator=False,
+class GANComponents:
+    @staticmethod
+    def build_generator(device: torch.device) -> AutoencoderKL:
+        with contextlib.redirect_stdout(None):
+            model = AutoencoderKL(
+                spatial_dims=SPATIAL_DIMS,
+                in_channels=IN_CHANNELS,
+                out_channels=OUT_CHANNELS,
+                channels=CHANNELS,
+                latent_channels=LATENT_CHANNELS,
+                num_res_blocks=NUM_RES_BLOCKS,
+                norm_num_groups=NORM_NUM_GROUPS,
+                attention_levels=ATTENTION_LEVELS,
             )
 
-            # backpropagate
-            loss_generator.backward()
-            # perform a single optimization step (parameter update)
-            optimizer_generator.step()
-            # update running training generator loss
-            train_generator_loss += loss_generator.item() * inputs.size(0)
-            reconstruction_metric += reconstruction_val * inputs.size(0)
-            kld_metric += kld_val * inputs.size(0)
-            perceptual_metric += perceptual_val * inputs.size(0)
-            adversarial_metric += adversarial_val * inputs.size(0)
+        model.to(device)
+        return model
 
-            ###################
-            # Discriminator part
-            ###################
+    @staticmethod
+    def build_discriminator(device: torch.device) -> PatchDiscriminator:
+        with contextlib.redirect_stdout(None):
+            discriminator = PatchDiscriminator(
+                spatial_dims=SPATIAL_DIMS,
+                num_layers_d=NUM_LAYERS_D,
+                channels=DISCRIMINATOR_CHANNELS,
+                in_channels=IN_CHANNELS,
+                out_channels=OUT_CHANNELS,
+                activation=(Act.LEAKYRELU, {"negative_slope": 0.2}),
+                norm="BATCH",
+                bias=False,
+                padding=1,
+            )
 
-            if adversarial_weight > 0:
+        discriminator.to(device)
+        return discriminator
 
-                # clear the gradients of all optimized variables
-                optimizer_discriminator.zero_grad(set_to_none=True)
-                # predict fake logits
-                logits_fake = discriminator(reconstruction.contiguous().detach())[-1]
-                # compute real logits
-                logits_real = discriminator(inputs.contiguous().detach())[-1]
-                # calculate the discriminator loss
-                loss_d_fake = adv_loss(logits_fake, target_is_real=False, for_discriminator=True)
-                loss_d_real = adv_loss(logits_real, target_is_real=True, for_discriminator=True)
-                discriminator_loss = (loss_d_fake + loss_d_real) * 0.5
-                loss_discriminator = adversarial_weight * discriminator_loss
+    @staticmethod
+    def build_losses(device: torch.device) -> tuple[PerceptualLoss, PatchAdversarialLoss, nn.L1Loss]:
+        perceptual_loss_fn = build_alex_perceptual_loss(device)
+        adversarial_loss_fn = PatchAdversarialLoss(criterion="least_squares")
+        reconstruction_loss_fn = nn.L1Loss()
+        reconstruction_loss_fn.to(device)
 
-                # backpropagate
-                loss_discriminator.backward()
-                # perform a single optimization step (parameter update)
-                optimizer_discriminator.step()
-                # update running training discriminator loss
-                train_discriminator_loss += loss_discriminator.item() * inputs.size(0)
+        return perceptual_loss_fn, adversarial_loss_fn, reconstruction_loss_fn
 
-        # Calculate average training loss and accuracy over the epoch
-        train_generator_loss_list.append(train_generator_loss / len(train_loader.dataset))
-        reconstruction_metric_list.append(reconstruction_metric / len(train_loader.dataset))
-        kld_metric_list.append(kld_metric / len(train_loader.dataset))
-        perceptual_metric_list.append(perceptual_metric / len(train_loader.dataset))
-        adversarial_metric_list.append(adversarial_metric / len(train_loader.dataset))
 
-        if adversarial_weight > 0:
-            train_discriminator_loss_list.append(train_discriminator_loss / len(train_loader.dataset))
+class GANMath:
+    @staticmethod
+    def vae_gaussian_kl_loss(mu: torch.Tensor, sigma: torch.Tensor) -> torch.Tensor:
+        # L_KL = 0.5 * sum(mu^2 + sigma^2 - log(sigma^2) - 1)
+        kl_loss = 0.5 * torch.sum(mu.pow(2) + sigma.pow(2) - torch.log(sigma.pow(2)) - 1, dim=[1, 2, 3])
+        kl_loss = torch.sum(kl_loss) / kl_loss.shape[0]
+        return kl_loss
 
-        ###################
-        # Validation step #
-        ###################
-        model.eval()  # set model to evaluation mode
-        valid_metric = 0
+    @staticmethod
+    def generator_loss(
+        recon_x: torch.Tensor,
+        x: torch.Tensor,
+        mu: torch.Tensor,
+        sigma: torch.Tensor,
+        logits: torch.Tensor,
+        perceptual_loss_fn: PerceptualLoss,
+        adversarial_loss_fn: PatchAdversarialLoss,
+        l1_loss_fn: nn.L1Loss,
+    ) -> tuple[torch.Tensor, float, float, float, float]:
+        recon_loss = l1_loss_fn(recon_x.float(), x.float())
+        kl_loss = GANMath.vae_gaussian_kl_loss(mu, sigma)
+        perceptual_loss_value = perceptual_loss_fn(recon_x.float(), x.float())
+        adversarial_loss_value = adversarial_loss_fn(logits, target_is_real=True, for_discriminator=False)
 
-        with torch.no_grad():  # disable gradient calculation during validation
-            for batch_data in valid_loader:
-                # Load data and target samples stored the current batch_data
-                inputs = batch_data["image"].to(device)
-                # forward pass: compute predicted outputs by passing inputs to the model
-                reconstruction, z_mu, z_sigma = model(inputs)
-                # calculate the loss
-                recon_val = reconstruction_loss(reconstruction.float(), inputs.float())
-                valid_metric += recon_val.item() * inputs.size(0)
-
-        # Compute average validation loss and accuracy
-        valid_metric_list.append(valid_metric / len(valid_loader.dataset))
-
-        print(
-            f"Epoch: {epoch+1} \tTraining Loss: {train_generator_loss_list[-1]:.6f} \tValidation metric: {valid_metric_list[-1]:.6f}"
+        # L_G = L_recon + λ_kl * L_kl + λ_p * L_perceptual + λ_adv * L_adv
+        total_loss = (
+            recon_loss
+            + KL_WEIGHT * kl_loss
+            + PERCEPTUAL_WEIGHT * perceptual_loss_value
+            + ADVERSARIAL_WEIGHT * adversarial_loss_value
         )
 
-        if save_best_model_from_metric:
-            # Save the model if it has the best validation loss
-            if valid_metric_list[-1] < best_valid_metric:
+        return (
+            total_loss,
+            recon_loss.item(),
+            (KL_WEIGHT * kl_loss).item(),
+            (PERCEPTUAL_WEIGHT * perceptual_loss_value).item(),
+            (ADVERSARIAL_WEIGHT * adversarial_loss_value).item(),
+        )
+
+
+class GANTraining:
+    @staticmethod
+    def train(
+        model: AutoencoderKL,
+        discriminator: PatchDiscriminator,
+        train_loader: DataLoader,
+        valid_loader: DataLoader,
+        optimizer_generator: torch.optim.Optimizer,
+        optimizer_discriminator: torch.optim.Optimizer,
+        perceptual_loss_fn: PerceptualLoss,
+        adversarial_loss_fn: PatchAdversarialLoss,
+        l1_loss_fn: nn.L1Loss,
+        device: torch.device,
+    ) -> tuple[dict[str, Any], dict[str, torch.Tensor]]:
+        model.to(device)
+        discriminator.to(device)
+
+        train_generator_loss_list: list[float] = []
+        train_discriminator_loss_list: list[float] = []
+        valid_metric_list: list[float] = []
+        reconstruction_metric_list: list[float] = []
+        kld_metric_list: list[float] = []
+        perceptual_metric_list: list[float] = []
+        adversarial_metric_list: list[float] = []
+
+        best_valid_metric = float("inf")
+        best_model: dict[str, torch.Tensor] | None = None
+        best_epoch = 0
+
+        for epoch in range(COMMON_NUM_EPOCHS):
+            model.train()
+            discriminator.train()
+
+            train_generator_loss = 0.0
+            train_discriminator_loss = 0.0
+            reconstruction_metric = 0.0
+            kld_metric = 0.0
+            perceptual_metric = 0.0
+            adversarial_metric = 0.0
+
+            for raw_batch_data in train_loader:
+                batch_data: BatchData = raw_batch_data
+                inputs = batch_data["image"].to(device)
+
+                optimizer_generator.zero_grad()
+
+                reconstruction, z_mu, z_sigma = model(inputs)
+                logits_fake = discriminator(reconstruction.contiguous().float())[-1]
+
+                (
+                    loss_generator,
+                    reconstruction_val,
+                    kld_val,
+                    perceptual_val,
+                    adversarial_val,
+                ) = GANMath.generator_loss(
+                    reconstruction,
+                    inputs,
+                    z_mu,
+                    z_sigma,
+                    logits_fake,
+                    perceptual_loss_fn,
+                    adversarial_loss_fn,
+                    l1_loss_fn,
+                )
+
+                loss_generator.backward()
+                optimizer_generator.step()
+
+                train_generator_loss += loss_generator.item() * inputs.size(0)
+                reconstruction_metric += reconstruction_val * inputs.size(0)
+                kld_metric += kld_val * inputs.size(0)
+                perceptual_metric += perceptual_val * inputs.size(0)
+                adversarial_metric += adversarial_val * inputs.size(0)
+
+                if ADVERSARIAL_WEIGHT > 0:
+                    optimizer_discriminator.zero_grad(set_to_none=True)
+
+                    logits_fake = discriminator(reconstruction.contiguous().detach())[-1]
+                    logits_real = discriminator(inputs.contiguous().detach())[-1]
+
+                    loss_d_fake = adversarial_loss_fn(logits_fake, target_is_real=False, for_discriminator=True)
+                    loss_d_real = adversarial_loss_fn(logits_real, target_is_real=True, for_discriminator=True)
+
+                    # L_D = λ_adv * 0.5 * (L_fake + L_real)
+                    loss_discriminator = ADVERSARIAL_WEIGHT * 0.5 * (loss_d_fake + loss_d_real)
+
+                    loss_discriminator.backward()
+                    optimizer_discriminator.step()
+
+                    train_discriminator_loss += loss_discriminator.item() * inputs.size(0)
+
+            train_generator_loss_list.append(train_generator_loss / len(train_loader.dataset))
+            reconstruction_metric_list.append(reconstruction_metric / len(train_loader.dataset))
+            kld_metric_list.append(kld_metric / len(train_loader.dataset))
+            perceptual_metric_list.append(perceptual_metric / len(train_loader.dataset))
+            adversarial_metric_list.append(adversarial_metric / len(train_loader.dataset))
+
+            if ADVERSARIAL_WEIGHT > 0:
+                train_discriminator_loss_list.append(train_discriminator_loss / len(train_loader.dataset))
+
+            model.eval()
+            valid_metric = 0.0
+
+            with torch.no_grad():
+                for raw_batch_data in valid_loader:
+                    batch_data: BatchData = raw_batch_data
+                    inputs = batch_data["image"].to(device)
+
+                    reconstruction, _, _ = model(inputs)
+                    recon_val = l1_loss_fn(reconstruction.float(), inputs.float())
+                    valid_metric += recon_val.item() * inputs.size(0)
+
+            valid_metric_list.append(valid_metric / len(valid_loader.dataset))
+
+            print(
+                f"Epoch: {epoch+1} \tTraining Loss: {train_generator_loss_list[-1]:.6f} \tValidation metric: {valid_metric_list[-1]:.6f}"
+            )
+
+            if SAVE_BEST_MODEL_FROM_METRIC:
+                if valid_metric_list[-1] < best_valid_metric:
+                    best_valid_metric = valid_metric_list[-1]
+                    best_model = model.state_dict()
+                    best_epoch = epoch + 1
+            else:
                 best_valid_metric = valid_metric_list[-1]
                 best_model = model.state_dict()
-                best_epoch = epoch + 1  # Save the epoch number
-        else:
-            # Save the last model as best model
-            best_valid_metric = valid_metric_list[-1]
-            best_epoch = epoch + 1
-            best_model = model.state_dict()
+                best_epoch = epoch + 1
 
-    # After training, load the best model
-    model.load_state_dict(best_model)
-    torch.save(best_model, "best_test_lossmodel.pth")  # Save the best model
+        if best_model is None:
+            raise RuntimeError("Best model was not computed.")
 
-    print(f"Best model selected at epoch {best_epoch} with validation loss: {best_valid_metric:.6f}")
+        metrics = {
+            "best_epoch": best_epoch,
+            "best_valid_metric": best_valid_metric,
+            "train_generator_loss": train_generator_loss_list,
+            "train_discriminator_loss": train_discriminator_loss_list,
+            "valid_metric": valid_metric_list,
+            "reconstruction_metric": reconstruction_metric_list,
+            "kld_metric": kld_metric_list,
+            "perceptual_metric": perceptual_metric_list,
+            "adversarial_metric": adversarial_metric_list,
+        }
 
-    # Plot loss curves
-    plt.figure(figsize=(16, 6))
+        return metrics, best_model
 
-    # Plotting global loss
-    plt.subplot(1, 5, 1)
-    plt.plot(train_generator_loss_list, color="C0", linewidth=2.0, label="Training Loss")
-    plt.title("Training loss curve")
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss")
-    plt.legend()
+    @staticmethod
+    def evaluate_test_reconstruction(
+        model: AutoencoderKL,
+        test_loader: DataLoader,
+        l1_loss_fn: nn.L1Loss,
+        device: torch.device,
+    ) -> float:
+        test_metric = 0.0
+        model.eval()
 
-    # Plotting Reconstruction loss
-    plt.subplot(1, 5, 2)
-    plt.plot(reconstruction_metric_list, color="C0", linewidth=2.0, label="Reconstruction metric")
-    plt.title("Reconstruction metric")
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss (%)")
-    plt.legend()
-
-    # Plotting KL loss
-    plt.subplot(1, 5, 3)
-    plt.plot(kld_metric_list, color="C0", linewidth=2.0, label="KL divergence metric")
-    plt.title("KL divergence metric")
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss (%)")
-    plt.legend()
-
-    # Plotting Perceptual loss
-    plt.subplot(1, 5, 4)
-    plt.plot(perceptual_metric_list, color="C0", linewidth=2.0, label="Perceputal metric")
-    plt.title("Perceptual metric")
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss (%)")
-    plt.legend()
-
-    # Plotting Perceptual loss
-    plt.subplot(1, 5, 5)
-    plt.plot(adversarial_metric_list, color="C0", linewidth=2.0, label="Adversarial metric")
-    plt.title("Adversarial metric")
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss (%)")
-    plt.legend()
-
-    if adversarial_weight > 0:
-        # Express the adversarial terms without the weight coefficient
-        generator_list = [x / adversarial_weight for x in adversarial_metric_list]
-        discriminator_list = [x / adversarial_weight for x in train_discriminator_loss_list]
-
-        plt.title("Adversarial Training Curves", fontsize=20)
-        plt.plot(np.linspace(1, n_epochs, n_epochs), generator_list, color="C0", linewidth=2.0, label="Generator")
-        plt.plot(
-            np.linspace(1, n_epochs, n_epochs), discriminator_list, color="C1", linewidth=2.0, label="Discriminator"
-        )
-        plt.yticks(fontsize=12)
-        plt.xticks(fontsize=12)
-        plt.xlabel("Epochs", fontsize=16)
-        plt.ylabel("Loss", fontsize=16)
-        plt.legend(prop={"size": 14})
-
-        # Save the figure as a PNG file
-        plt.savefig("img/adversarial_training_curves.png", dpi=300, bbox_inches="tight")
-
-        plt.show()
-
-    # initialize lists to monitor test loss and accuracy
-    test_metric = 0.0
-
-    model.eval()  # prep model for *evaluation*
-
-    with torch.no_grad():  # disable gradient calculation during validation
-        for batch_data in test_loader:
-            # forward pass: compute predicted outputs by passing inputs to the model
-            inputs = batch_data["image"].to(device)
-            reconstruction, z_mu, z_sigma = model(inputs)
-            # calculate the loss
-            recon_val = reconstruction_loss(reconstruction.float(), inputs.float())
-            test_metric += recon_val.item() * inputs.size(0)
-
-    # calculate and print avg test loss
-    test_metric = test_metric / len(test_loader.dataset)
-    print("Test reconstruction metric: {:.6f}\n".format(test_metric))
-
-    # Prepare next cell
-    dataiter = iter(test_loader)
-
-    # obtain one batch of test images
-    batch_data = next(dataiter)
-    batch_data = next(dataiter)
-
-    # get sample outputs
-    inputs = batch_data["image"].to(device)
-    recons, _, _ = model(inputs)
-    # reconstruction images for display
-    recons = recons.detach().cpu().numpy()
-    inputs = inputs.detach().cpu().numpy()
-
-    # Plot the image, label and prediction
-    fig = plt.figure(figsize=(8, 8))
-    for idx in range(3):
-        ax = fig.add_subplot(3, 2, 2 * idx + 1, xticks=[], yticks=[])
-        ax.imshow(np.squeeze(inputs[idx]), cmap="gray")
-        ax.set_title("Original")
-        ax = fig.add_subplot(3, 2, 2 * idx + 2, xticks=[], yticks=[])
-        ax.imshow(np.squeeze(recons[idx]), cmap="gray")
-        ax.set_title("Reconstructed")
-
-    downsampling_ratio = 1
-    counter = 0  # counter initialisation
-
-    model.eval()  # prep model for *evaluation*
-    z_mu_accumulated = []
-
-    with torch.no_grad():  # Deactivate the gradient computations
-        for batch_data in test_loader:
-            counter += 1
-            if counter % downsampling_ratio == 0:
-                # forward pass: compute predicted outputs by passing inputs to the model
+        with torch.no_grad():
+            for raw_batch_data in test_loader:
+                batch_data: BatchData = raw_batch_data
                 inputs = batch_data["image"].to(device)
-                z_mu, _ = model.encode(inputs)
-                z_mu_accumulated.append(z_mu.cpu().numpy())
 
-    z_mu_accumulated = np.concatenate(z_mu_accumulated, axis=0)
+                reconstruction, _, _ = model(inputs)
+                recon_val = l1_loss_fn(reconstruction.float(), inputs.float())
+                test_metric += recon_val.item() * inputs.size(0)
 
-    z_mu_flattened = z_mu_accumulated.reshape(z_mu_accumulated.shape[0], -1)
-    print(
-        f"Size of the latent matrix passed to the t-SNE method (Nb Sample, vector dimensionality) = {z_mu_flattened.shape}"
-    )
+        return test_metric / len(test_loader.dataset)
 
-    # Apply t-SNE to reduce the dimensionality to 2 and allows a visualization of the latent space
-    tsne = TSNE(n_components=2, random_state=42)
-    z_mu_tsne = tsne.fit_transform(z_mu_flattened)
 
-    random_generation = False
+class GANVisualization:
+    @staticmethod
+    def interpolate_images(
+        model: AutoencoderKL,
+        latent_1: torch.Tensor,
+        latent_2: torch.Tensor,
+        device: torch.device,
+        steps: int = 10,
+    ) -> list[np.ndarray]:
+        latent_1 = latent_1.to(device)
+        latent_2 = latent_2.to(device)
 
-    if random_generation:
-        z_mu = torch.randn(1, 4, 8, 8).to(device)
-    else:
+        t_values = torch.linspace(0, 1, steps).to(device)
+        latent_tmp = [torch.lerp(latent_1, latent_2, t).to(device) for t in t_values]
+        latent_interp = torch.stack([latent.squeeze(0) for latent in latent_tmp], dim=0)
+        synthetic_interp = model.decode(latent_interp)
+
+        return [img.squeeze().detach().cpu().numpy() for img in synthetic_interp]
+
+    @staticmethod
+    def save_training_plots(run_dir: Path, metrics: dict[str, Any]) -> None:
+        panel_titles = (
+            "Training loss curve",
+            "Reconstruction metric",
+            "KL divergence metric",
+            "Perceptual metric",
+            "Adversarial metric",
+        )
+        panel_values = (
+            metrics["train_generator_loss"],
+            metrics["reconstruction_metric"],
+            metrics["kld_metric"],
+            metrics["perceptual_metric"],
+            metrics["adversarial_metric"],
+        )
+
+        save_metric_panels(
+            output_path=run_dir / "training_metrics.png",
+            panel_titles=panel_titles,
+            panel_values=panel_values,
+            y_label="Loss",
+            figsize=(16, 6),
+        )
+
+        if ADVERSARIAL_WEIGHT > 0 and metrics["train_discriminator_loss"]:
+            x_values = np.linspace(1, COMMON_NUM_EPOCHS, COMMON_NUM_EPOCHS)
+            generator_values = [x / ADVERSARIAL_WEIGHT for x in metrics["adversarial_metric"]]
+            discriminator_values = [x / ADVERSARIAL_WEIGHT for x in metrics["train_discriminator_loss"]]
+
+            save_two_curve_plot(
+                output_path=run_dir / "adversarial_training_curves.png",
+                x_values=x_values,
+                y_values_1=generator_values,
+                y_values_2=discriminator_values,
+                label_1="Generator",
+                label_2="Discriminator",
+                title="Adversarial Training Curves",
+                y_label="Loss",
+            )
+
+    @staticmethod
+    def run_post_training_visualizations(
+        model: AutoencoderKL,
+        test_loader: DataLoader,
+        device: torch.device,
+        run_dir: Path,
+    ) -> None:
+        latent_vectors = collect_latent_vectors(test_loader, device, model.encode)
+        save_latent_space_plot(
+            latent_vectors=latent_vectors,
+            output_path=run_dir / "latent_space_2d.png",
+            title="GAN Latent Space (t-SNE 2D)",
+        )
+
+        dataiter = iter(test_loader)
+        _ = next(dataiter)
+        batch_data: BatchData = next(dataiter)
+
         inputs = batch_data["image"].to(device)
-        print(inputs.shape)
-        input = inputs[2]
-        input = input.unsqueeze(0)
-        print(f"The input image is of size {input.shape}")
-        z_mu, _ = model.encode(input)
+        input_tensor = inputs[2].unsqueeze(0)
+        z_mu, _ = model.encode(input_tensor)
 
-    print(f"The latent sample is of size {z_mu.shape}")
+        print(f"The latent sample is of size {z_mu.shape}")
 
-    # Decode latent sample
-    reconstruction = model.decode(z_mu)
-    print(f"The reconstrudted image is of size {reconstruction.shape}")
+        reconstruction = model.decode(z_mu)
+        print(f"The reconstrudted image is of size {reconstruction.shape}")
 
-    img = reconstruction.squeeze().detach().cpu().numpy()
-    img = np.squeeze(img)
+        inputs = batch_data["image"].to(device)
 
-    fig = plt.figure(figsize=(4, 4))
-    ax = fig.add_subplot(111, xticks=[], yticks=[])
-    ax.imshow(img, cmap="gray")
+        latent_1, _ = model.encode(inputs[2].unsqueeze(0))
+        latent_2, _ = model.encode(inputs[4].unsqueeze(0))
 
-    # Randomly select two points in the latent space
-    inputs = batch_data["image"].to(device)
-    input = inputs[2]
-    input = input.unsqueeze(0)
-    latent_1, _ = model.encode(input)
-    input = inputs[4]
-    input = input.unsqueeze(0)
-    latent_2, _ = model.encode(input)
+        images = GANVisualization.interpolate_images(model, latent_1, latent_2, device, steps=64)
+        filename = run_dir / "mnist_interpolation.gif"
 
-    synthetic_1 = model.decode(latent_1)
-    synthetic_2 = model.decode(latent_2)
-
-    img_1 = synthetic_1.squeeze().detach().cpu().numpy()
-    img_1 = np.squeeze(img_1)
-    img_2 = synthetic_2.squeeze().detach().cpu().numpy()
-    img_2 = np.squeeze(img_2)
-
-    fig = plt.figure(figsize=(5, 5))
-    ax = fig.add_subplot(1, 2, 1, xticks=[], yticks=[])
-    ax.imshow(img_1, cmap="gray")
-    ax = fig.add_subplot(1, 2, 2, xticks=[], yticks=[])
-    ax.imshow(img_2, cmap="gray")
-
-
-    # Interpolate between the two points and decode to generate images
-    images = interpolate_images(model, latent_1, latent_2, steps=64)
-
-    # Animate the interpolated images
-    filename = "mnist_interpolation.gif"
-    save_animation_as_gif(images, filename=filename, interval=100)
-
-    # Affiche le GIF dans Jupyter
-    display(Image(filename=filename))
-
-
-def interpolate_images(model, latent_1, latent_2, steps=10):
-    # Interpolate between point1 and point2 in the latent space
-
-    latent_1.to(device)
-    latent_2.to(device)
-    t_values = torch.linspace(0, 1, steps).to(device)
-    latent_tmp = [torch.lerp(latent_1, latent_2, t).to(device) for t in t_values]
-    latent_interp = torch.stack([latent.squeeze(0) for latent in latent_tmp], dim=0)
-    synthetic_interp = model.decode(latent_interp)
-
-    # Return images as a list after detaching and converting to numpy
-    return [img.squeeze().detach().cpu().numpy() for img in synthetic_interp]
-
-
-def save_animation_as_gif(images, filename="animation.gif", interval=200):
-    fig, ax = plt.subplots(figsize=(2, 2))
-    img_display = ax.imshow(images[0], cmap="gray", vmin=0, vmax=1)
-    ax.axis("off")
-
-    def update(frame):
-        img_display.set_data(images[frame])
-        return [img_display]
-
-    ani = FuncAnimation(fig, update, frames=len(images), interval=interval, blit=True)
-    ani.save(filename, writer="pillow", fps=1000 // interval)
-    plt.close(fig)
+        save_animation_as_gif(images, filename=filename, interval=100)
+        display(Image(filename=str(filename)))
 
 
 if __name__ == "__main__":
-    train()
+    print_library_versions()
+
+    ensure_model_type_directories()
+    run_dir = create_run_directory("GAN")
+
+    train_loader, valid_loader, test_loader = get_mednist_dataloaders()
+
+    print(f"Training dataset size: {len(train_loader.dataset)}")
+    print(f"Validation dataset size: {len(valid_loader.dataset)}")
+    print(f"Test dataset size: {len(test_loader.dataset)}")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    model = GANComponents.build_generator(device)
+    discriminator = GANComponents.build_discriminator(device)
+
+    summary_kwargs = dict(col_names=["input_size", "output_size", "num_params"], depth=3, verbose=0)
+    summary(discriminator, (1, 1, IMAGE_SIZE, IMAGE_SIZE), device="cpu", **summary_kwargs)
+    discriminator.to(device)
+
+    perceptual_loss_fn, adversarial_loss_fn, l1_loss_fn = GANComponents.build_losses(device)
+
+    optimizer_generator = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE_G)
+    optimizer_discriminator = torch.optim.Adam(discriminator.parameters(), lr=LEARNING_RATE_D)
+
+    hyperparameters = {
+        "model_type": "GAN",
+        "common": {
+            "epochs": COMMON_NUM_EPOCHS,
+            "batch_size": BATCH_SIZE,
+            "image_size": IMAGE_SIZE,
+            "train_valid_ratio": TRAIN_VALID_RATIO,
+        },
+        "gan_specific": {
+            "spatial_dims": SPATIAL_DIMS,
+            "in_channels": IN_CHANNELS,
+            "out_channels": OUT_CHANNELS,
+            "channels": CHANNELS,
+            "latent_channels": LATENT_CHANNELS,
+            "num_res_blocks": NUM_RES_BLOCKS,
+            "norm_num_groups": NORM_NUM_GROUPS,
+            "attention_levels": ATTENTION_LEVELS,
+            "num_layers_d": NUM_LAYERS_D,
+            "discriminator_channels": DISCRIMINATOR_CHANNELS,
+            "learning_rate_g": LEARNING_RATE_G,
+            "learning_rate_d": LEARNING_RATE_D,
+            "kl_weight": KL_WEIGHT,
+            "perceptual_weight": PERCEPTUAL_WEIGHT,
+            "adversarial_weight": ADVERSARIAL_WEIGHT,
+        },
+    }
+
+    save_json(hyperparameters, run_dir / "hyperparameters.json")
+
+    training_metrics, best_model = GANTraining.train(
+        model=model,
+        discriminator=discriminator,
+        train_loader=train_loader,
+        valid_loader=valid_loader,
+        optimizer_generator=optimizer_generator,
+        optimizer_discriminator=optimizer_discriminator,
+        perceptual_loss_fn=perceptual_loss_fn,
+        adversarial_loss_fn=adversarial_loss_fn,
+        l1_loss_fn=l1_loss_fn,
+        device=device,
+    )
+
+    model.load_state_dict(best_model)
+    torch.save(best_model, run_dir / "best_test_lossmodel.pth")
+
+    print(
+        f"Best model selected at epoch {training_metrics['best_epoch']} with validation loss: {training_metrics['best_valid_metric']:.6f}"
+    )
+
+    GANVisualization.save_training_plots(run_dir, training_metrics)
+
+    test_metric = GANTraining.evaluate_test_reconstruction(
+        model=model,
+        test_loader=test_loader,
+        l1_loss_fn=l1_loss_fn,
+        device=device,
+    )
+
+    print("Test reconstruction metric: {:.6f}\n".format(test_metric))
+
+    metrics = dict(training_metrics)
+    metrics["test_reconstruction_metric"] = test_metric
+    save_json(metrics, run_dir / "metrics.json")
+
+    GANVisualization.run_post_training_visualizations(
+        model=model,
+        test_loader=test_loader,
+        device=device,
+        run_dir=run_dir,
+    )

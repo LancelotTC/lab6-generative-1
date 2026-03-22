@@ -1,110 +1,234 @@
-# import libraries
 import os
-import os
-import torch
-import monai
-import torch
-import monai
-import contextlib
-import matplotlib
-import contextlib
-import matplotlib
-import numpy as np
-import torchvision
-import numpy as np
-import torchvision
-import torch.nn as nn
-import torch.nn as nn
+import warnings
 from pathlib import Path
-from tqdm.auto import tqdm
-from torchinfo import summary
-from torchinfo import summary
+from typing import Callable, Sequence
+
 import matplotlib.pyplot as plt
-import matplotlib.pyplot as plt
-from torchvision import datasets
-from sklearn.manifold import TSNE
-from sklearn.manifold import TSNE
+import monai
+import numpy as np
+import torch
+import torchvision
 from monai.apps import MedNISTDataset
-from monai.apps import MedNISTDataset
-from monai.networks.layers import Act
+from monai.data import DataLoader, Dataset
+from monai.losses import PerceptualLoss
+from monai.transforms import Compose, EnsureChannelFirstd, LoadImaged, Resized, ScaleIntensityRanged
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 from torch.utils.data import random_split
-from torch.utils.data import random_split
-from monai.data import Dataset, DataLoader
-from IPython.display import Image, display
-from monai.data import Dataset, DataLoader
-from IPython.display import Image, display
-from monai.networks.nets import AutoencoderKL
-from matplotlib.animation import FuncAnimation
-from monai.data import Dataset as MonaiDataset
-from matplotlib.animation import FuncAnimation
-from sklearn.model_selection import train_test_split
-from monai.transforms import Compose, LoadImage, ToTensor
-from monai.losses import PatchAdversarialLoss, PerceptualLoss
-from monai.networks.nets import AutoencoderKL, PatchDiscriminator
-from monai.transforms import LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, Resized
-from monai.transforms import Compose, LoadImaged, EnsureChannelFirstd, ScaleIntensityRanged, Resized
 
-print(f"PyTorch version: {torch.__version__}")
-print(f"Torchvision version: {torchvision.__version__}")
-print(f"Numpy version: {np.__version__}")
-print(f"Monai version: {monai.__version__}")
+from settings import (
+    BATCH_SIZE,
+    COMMON_TSNE_RANDOM_STATE,
+    DATA_ROOT_DIR,
+    IMAGE_SIZE,
+    MAX_INTENSITY_VALUE,
+    MEDNIST_DATA_DIR,
+    MEDNIST_TRAIN_SECTION,
+    MEDNIST_VALID_SECTION,
+    MIN_INTENSITY_VALUE,
+    NUM_WORKERS,
+    SEED,
+    SELECTED_LABEL,
+    TRAIN_VALID_RATIO,
+)
+
+BatchData = dict[str, torch.Tensor | list[str]]
 
 
-print(f"PyTorch version: {torch.__version__}")
-print(f"Torchvision version: {torchvision.__version__}")
-print(f"Numpy version: {np.__version__}")
-print(f"Monai version: {monai.__version__}")
-##
+def print_library_versions() -> None:
+    print(f"PyTorch version: {torch.__version__}")
+    print(f"Torchvision version: {torchvision.__version__}")
+    print(f"Numpy version: {np.__version__}")
+    print(f"Monai version: {monai.__version__}")
 
-# Path to store MedNIST dataset
-data_dir = "data/MedNIST"
 
-# Checks if data has already been downloaded
-download = not os.path.exists(data_dir)
+def get_mednist_dataloaders(
+    batch_size: int = BATCH_SIZE,
+    image_size: int = IMAGE_SIZE,
+    train_valid_ratio: float = TRAIN_VALID_RATIO,
+    selected_label: str = SELECTED_LABEL,
+    num_workers: int = NUM_WORKERS,
+) -> tuple[DataLoader, DataLoader, DataLoader]:
+    download = not os.path.exists(MEDNIST_DATA_DIR)
+    train_set = MedNISTDataset(root_dir=DATA_ROOT_DIR, section=MEDNIST_TRAIN_SECTION, download=download, seed=SEED)
+    test_set = MedNISTDataset(root_dir=DATA_ROOT_DIR, section=MEDNIST_VALID_SECTION, download=download, seed=SEED)
 
-# Load dataset without reloading if data already exists
-train_set = MedNISTDataset(root_dir="data", section="training", download=download, seed=0)
-test_set = MedNISTDataset(root_dir="data", section="validation", download=download, seed=0)
+    train_datalist = [
+        {"image": item["image"], "label": selected_label}
+        for item in train_set.data
+        if item["class_name"] == selected_label
+    ]
+    test_datalist = [
+        {"image": item["image"], "label": selected_label}
+        for item in test_set.data
+        if item["class_name"] == selected_label
+    ]
 
-##
-# how many samples per batch to load
-batch_size = 64
-image_size = 64
-train_valid_ratio = 0.8
-minv = 0  # min intensity value of each image after rescaling
-maxv = 1  # max intensity value of each image after rescaling
+    transforms = [
+        LoadImaged(keys=["image"]),
+        EnsureChannelFirstd(keys=["image"]),
+        ScaleIntensityRanged(
+            keys=["image"],
+            a_min=0.0,
+            a_max=255.0,
+            b_min=MIN_INTENSITY_VALUE,
+            b_max=MAX_INTENSITY_VALUE,
+            clip=True,
+        ),
+        Resized(keys=["image"], spatial_size=[image_size, image_size]),
+    ]
 
-labels = ["AbdomenCT", "BreastMRI", "ChestCT", "CXR", "Hand", "HeadCT"]
-selected_label = labels[4]
+    train_dataset = Dataset(data=train_datalist, transform=Compose(transforms))
+    test_data = Dataset(data=test_datalist, transform=Compose(transforms))
 
-# keep only the Hand images
-train_datalist = [
-    {"image": item["image"], "label": selected_label} for item in train_set.data if item["class_name"] == selected_label
-]
-test_datalist = [
-    {"image": item["image"], "label": selected_label} for item in test_set.data if item["class_name"] == selected_label
-]
+    train_size = int(train_valid_ratio * len(train_dataset))
+    valid_size = len(train_dataset) - train_size
+    train_data, valid_data = random_split(train_dataset, [train_size, valid_size])
 
-all_transforms = [
-    LoadImaged(keys=["image"]),
-    EnsureChannelFirstd(keys=["image"]),
-    ScaleIntensityRanged(keys=["image"], a_min=0.0, a_max=255.0, b_min=minv, b_max=maxv, clip=True),
-    Resized(keys=["image"], spatial_size=[image_size, image_size]),
-]
+    train_loader = DataLoader(
+        train_data,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
+    )
+    valid_loader = DataLoader(
+        valid_data,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
+    )
+    test_loader = DataLoader(
+        test_data,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        persistent_workers=num_workers > 0,
+    )
+    return train_loader, valid_loader, test_loader
 
-train_dataset = Dataset(data=train_datalist, transform=Compose(all_transforms))
-test_data = Dataset(data=test_datalist, transform=Compose(all_transforms))
 
-# split the train_data into a train (80%) and valid (20%) subdataset
-train_size = int(train_valid_ratio * len(train_dataset))  # 80% for training
-valid_size = len(train_dataset) - train_size  # 20% for validation
-train_data, valid_data = random_split(train_dataset, [train_size, valid_size])
+def save_metric_panels(
+    output_path: Path,
+    panel_titles: Sequence[str],
+    panel_values: Sequence[Sequence[float]],
+    y_label: str = "Loss",
+    figsize: tuple[int, int] = (16, 6),
+) -> None:
+    panel_count = len(panel_titles)
 
-# prepare data loaders
-train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=4, persistent_workers=True)
-valid_loader = DataLoader(valid_data, batch_size=batch_size, shuffle=False, num_workers=4, persistent_workers=True)
-test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=4, persistent_workers=True)
+    plt.figure(figsize=figsize)
 
-print(f"Training dataset size: {len(train_loader.dataset)}")
-print(f"Validation dataset size: {len(valid_loader.dataset)}")
-print(f"Test dataset size: {len(test_loader.dataset)}")
+    for panel_index, (title, values) in enumerate(zip(panel_titles, panel_values), start=1):
+        plt.subplot(1, panel_count, panel_index)
+        plt.plot(values, color="C0", linewidth=2.0, label=title)
+        plt.title(title)
+        plt.xlabel("Epochs")
+        plt.ylabel(y_label)
+        plt.legend()
+
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def save_two_curve_plot(
+    output_path: Path,
+    x_values: Sequence[float] | np.ndarray,
+    y_values_1: Sequence[float] | np.ndarray,
+    y_values_2: Sequence[float] | np.ndarray,
+    label_1: str,
+    label_2: str,
+    title: str,
+    y_label: str,
+) -> None:
+    plt.figure(figsize=(8, 6))
+    plt.title(title, fontsize=20)
+
+    plt.plot(x_values, y_values_1, color="C0", linewidth=2.0, label=label_1)
+    plt.plot(x_values, y_values_2, color="C1", linewidth=2.0, label=label_2)
+
+    plt.yticks(fontsize=12)
+    plt.xticks(fontsize=12)
+    plt.xlabel("Epochs", fontsize=16)
+    plt.ylabel(y_label, fontsize=16)
+    plt.legend(prop={"size": 14})
+
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def build_alex_perceptual_loss(device: torch.device) -> PerceptualLoss:
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Arguments other than a weight enum or `None` for 'weights' are deprecated.*",
+            category=UserWarning,
+            module="torchvision.models._utils",
+        )
+        perceptual_loss_fn = PerceptualLoss(spatial_dims=2, network_type="alex")
+
+    perceptual_loss_fn.to(device)
+    return perceptual_loss_fn
+
+
+def collect_latent_vectors(
+    data_loader: DataLoader,
+    device: torch.device,
+    encode_fn: Callable[[torch.Tensor], torch.Tensor | tuple[torch.Tensor, ...]],
+) -> np.ndarray:
+    latent_vectors: list[np.ndarray] = []
+
+    with torch.no_grad():
+        for raw_batch_data in data_loader:
+            batch_data: BatchData = raw_batch_data
+            inputs = batch_data["image"].to(device)
+
+            encoded = encode_fn(inputs)
+            latent_tensor = encoded[0] if isinstance(encoded, tuple) else encoded
+            latent_vectors.append(latent_tensor.detach().cpu().reshape(latent_tensor.shape[0], -1).numpy())
+
+    return np.concatenate(latent_vectors, axis=0)
+
+
+def save_latent_space_plot(
+    latent_vectors: np.ndarray,
+    output_path: Path,
+    title: str,
+    random_state: int = COMMON_TSNE_RANDOM_STATE,
+) -> np.ndarray:
+    if latent_vectors.ndim != 2:
+        raise ValueError("latent_vectors must be a 2D array of shape [n_samples, n_features].")
+
+    if latent_vectors.shape[0] < 2:
+        raise ValueError("At least 2 samples are required to build a 2D latent-space embedding.")
+
+    vectors = latent_vectors.astype(np.float32, copy=False)
+    vectors = (vectors - vectors.mean(axis=0, keepdims=True)) / (vectors.std(axis=0, keepdims=True) + 1e-8)
+
+    if vectors.shape[1] > 50:
+        pca = PCA(n_components=min(50, vectors.shape[0], vectors.shape[1]), random_state=random_state)
+        vectors = pca.fit_transform(vectors)
+
+    perplexity = min(30, max(5, (vectors.shape[0] - 1) // 3))
+    perplexity = min(perplexity, vectors.shape[0] - 1)
+
+    tsne = TSNE(
+        n_components=2,
+        random_state=random_state,
+        init="pca",
+        learning_rate="auto",
+        perplexity=perplexity,
+    )
+    embedding_2d = tsne.fit_transform(vectors)
+
+    plt.figure(figsize=(8, 6))
+    plt.scatter(embedding_2d[:, 0], embedding_2d[:, 1], s=10, alpha=0.75, c="C0", edgecolors="none")
+    plt.title(title)
+    plt.xlabel("Component 1")
+    plt.ylabel("Component 2")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+    return embedding_2d
