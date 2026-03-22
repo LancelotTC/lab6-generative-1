@@ -429,7 +429,7 @@ class LDMVisualization:
     @staticmethod
     def save_autoencoder_training_plots(plots_dir: Path, metrics: dict[str, list[float]]) -> None:
         save_metric_panels(
-            output_path=plots_dir / "autoencoder_training_metrics.png",
+            output_path=plots_dir / "Diffusion Model - Autoencoder Training Metrics.png",
             panel_titles=("Reconstruction", "Generator", "Discriminator"),
             panel_values=(
                 metrics["epoch_recon_losses"],
@@ -447,7 +447,7 @@ class LDMVisualization:
                 AUTOENCODER_VAL_INTERVAL,
             )
             save_two_curve_plot(
-                output_path=plots_dir / "autoencoder_train_vs_val_reconstruction.png",
+                output_path=plots_dir / "Diffusion Model - Autoencoder Train vs Validation Reconstruction.png",
                 x_values=x_values,
                 y_values_1=[metrics["epoch_recon_losses"][epoch - 1] for epoch in x_values],
                 y_values_2=metrics["val_recon_losses"],
@@ -460,7 +460,7 @@ class LDMVisualization:
         if ADVERSARIAL_WEIGHT > 0:
             x_values = np.arange(1, len(metrics["epoch_gen_losses"]) + 1)
             save_two_curve_plot(
-                output_path=plots_dir / "adversarial_training_curves.png",
+                output_path=plots_dir / "Diffusion Model - Adversarial Training Curves.png",
                 x_values=x_values,
                 y_values_1=metrics["epoch_gen_losses"],
                 y_values_2=metrics["epoch_disc_losses"],
@@ -473,7 +473,7 @@ class LDMVisualization:
     @staticmethod
     def save_diffusion_training_plots(plots_dir: Path, metrics: dict[str, list[float]]) -> None:
         save_metric_panels(
-            output_path=plots_dir / "diffusion_training_metrics.png",
+            output_path=plots_dir / "Diffusion Model - Diffusion Training Metrics.png",
             panel_titles=("Diffusion Train Loss",),
             panel_values=(metrics["epoch_losses"],),
             y_label="MSE",
@@ -487,7 +487,7 @@ class LDMVisualization:
                 DIFFUSION_VAL_INTERVAL,
             )
             save_two_curve_plot(
-                output_path=plots_dir / "diffusion_train_vs_val.png",
+                output_path=plots_dir / "Diffusion Model - Diffusion Train vs Validation.png",
                 x_values=x_values,
                 y_values_1=[metrics["epoch_losses"][epoch - 1] for epoch in x_values],
                 y_values_2=metrics["val_losses"],
@@ -573,7 +573,11 @@ class LDMVisualization:
         plt.imshow(chain[0, 0].detach().cpu(), vmin=0, vmax=1, cmap="gray")
         plt.tight_layout()
         plt.axis("off")
-        plt.savefig(plots_dir / "decoded_intermediates_every_100_steps.png", dpi=300, bbox_inches="tight")
+        plt.savefig(
+            plots_dir / "Diffusion Model - Decoded Intermediates Every 100 Steps.png",
+            dpi=300,
+            bbox_inches="tight",
+        )
         plt.close()
 
 
@@ -701,7 +705,7 @@ if __name__ == "__main__":
     latent_vectors = collect_latent_vectors(valid_loader, device, autoencoder.encode)
     save_latent_space_plot(
         latent_vectors=latent_vectors,
-        output_path=plots_dir / "latent_space_2d.png",
+        output_path=plots_dir / "Diffusion Model - Latent Space (t-SNE 2D).png",
         title="LDM Autoencoder Latent Space (t-SNE 2D)",
     )
     LDMVisualization.save_mednist_interpolation_gif(

@@ -1,6 +1,7 @@
 /__pycache__
 /data
 /runs
+/model_structures
 
 tempCodeRunnerFile.*
 *.ipynb

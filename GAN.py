@@ -377,7 +377,7 @@ class GANVisualization:
         )
 
         save_metric_panels(
-            output_path=plots_dir / "training_metrics.png",
+            output_path=plots_dir / "GAN - Training Metrics.png",
             panel_titles=panel_titles,
             panel_values=panel_values,
             y_label="Loss",
@@ -390,7 +390,7 @@ class GANVisualization:
             discriminator_values = [x / ADVERSARIAL_WEIGHT for x in metrics["train_discriminator_loss"]]
 
             save_two_curve_plot(
-                output_path=plots_dir / "adversarial_training_curves.png",
+                output_path=plots_dir / "GAN - Adversarial Training Curves.png",
                 x_values=x_values,
                 y_values_1=generator_values,
                 y_values_2=discriminator_values,
@@ -429,7 +429,7 @@ class GANVisualization:
         latent_vectors = collect_latent_vectors(test_loader, device, model.encode)
         save_latent_space_plot(
             latent_vectors=latent_vectors,
-            output_path=plots_dir / "latent_space_2d.png",
+            output_path=plots_dir / "GAN - Latent Space (t-SNE 2D).png",
             title="GAN Latent Space (t-SNE 2D)",
         )
 
@@ -457,7 +457,7 @@ class GANVisualization:
         save_animation_as_gif(images, filename=filename, interval=100)
         GANVisualization.save_decoded_intermediates_strip(
             images=images,
-            output_path=plots_dir / "decoded_intermediates_every_100_steps.png",
+            output_path=plots_dir / "GAN - Decoded Intermediates Every 100 Steps.png",
         )
         display(Image(filename=str(filename)))
 
