@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 # Shared training/data constants
-COMMON_NUM_EPOCHS: int = 120
+COMMON_NUM_EPOCHS: int = 60
 BATCH_SIZE: int = 64
 IMAGE_SIZE: int = 64
 TRAIN_VALID_RATIO: float = 0.8
@@ -21,5 +21,5 @@ SELECTED_LABEL: str = MEDNIST_LABELS[4]  # Hand
 
 # Run organization constants
 RUNS_ROOT: Path = Path("runs")
-MODEL_TYPES: tuple[str, ...] = ("GAN", "VAE", "LDM")
+MODEL_TYPES: tuple[str, ...] = ("GAN", "LDM")
 RUN_DATETIME_FORMAT: str = "%Y%m%d_%H%M%S_%f"

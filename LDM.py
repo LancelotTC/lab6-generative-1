@@ -1,4 +1,5 @@
 import contextlib
+import time
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -26,23 +27,23 @@ from common import (
     save_two_curve_plot,
 )
 from settings import BATCH_SIZE, IMAGE_SIZE, TRAIN_VALID_RATIO
-from utils import create_run_directory, ensure_model_type_directories, save_animation_as_gif, save_json
+from utils import create_run_directory, ensure_model_type_directories, save_animation_as_gif, save_json, pgcd
 
 SPATIAL_DIMS = 2
 IN_CHANNELS = 1
 OUT_CHANNELS = 1
 
 # AutoencoderKL channels for latent compression before diffusion.
-AUTOENCODER_CHANNELS = (128, 128, 256)
-LATENT_CHANNELS = 3
+AUTOENCODER_CHANNELS = (16, 24, 32)
+LATENT_CHANNELS = 16
 NUM_RES_BLOCKS = 2
-NORM_NUM_GROUPS = AUTOENCODER_CHANNELS[0]
+NORM_NUM_GROUPS = pgcd(*AUTOENCODER_CHANNELS)
 ATTENTION_LEVELS = (False, False, False)
 WITH_ENCODER_NONLOCAL_ATTN = False
 WITH_DECODER_NONLOCAL_ATTN = False
 
 DISCRIMINATOR_NUM_LAYERS_D = 3
-DISCRIMINATOR_CHANNELS = 64
+DISCRIMINATOR_CHANNELS = 16
 
 AUTOENCODER_LEARNING_RATE = 1e-4
 DISCRIMINATOR_LEARNING_RATE = 5e-4
@@ -59,9 +60,10 @@ AUTOENCODER_WARM_UP_N_EPOCHS = 10
 DIFFUSION_MAX_EPOCHS = 80
 DIFFUSION_VAL_INTERVAL = 40
 
-DIFFUSION_CHANNELS = (128, 256, 512)
+DIFFUSION_CHANNELS = (16, 24, 32)
 DIFFUSION_ATTENTION_LEVELS = (False, True, True)
-DIFFUSION_NUM_HEAD_CHANNELS = (0, 256, 512)
+DIFFUSION_NUM_HEAD_CHANNELS = (0, 4, 8)
+DIFFUSION_NORM_NUM_GROUPS = pgcd(*DIFFUSION_CHANNELS)
 DIFFUSION_NUM_TRAIN_TIMESTEPS = 1000
 DIFFUSION_BETA_START = 0.0015
 DIFFUSION_BETA_END = 0.0195
@@ -106,8 +108,8 @@ class LDMComponents:
         return discriminator
 
     @staticmethod
-    def build_diffusion_unet() -> DiffusionModelUNet:
-        return DiffusionModelUNet(
+    def build_diffusion_unet(device: torch.device) -> DiffusionModelUNet:
+        diffusion_unet = DiffusionModelUNet(
             spatial_dims=SPATIAL_DIMS,
             in_channels=LATENT_CHANNELS,
             out_channels=LATENT_CHANNELS,
@@ -115,7 +117,10 @@ class LDMComponents:
             channels=DIFFUSION_CHANNELS,
             attention_levels=DIFFUSION_ATTENTION_LEVELS,
             num_head_channels=DIFFUSION_NUM_HEAD_CHANNELS,
+            norm_num_groups=DIFFUSION_NORM_NUM_GROUPS,
         )
+        diffusion_unet.to(device)
+        return diffusion_unet
 
     @staticmethod
     def build_scheduler() -> LDMScheduler:
@@ -304,9 +309,6 @@ class LDMTraining:
         scaler: GradScaler,
         device: torch.device,
     ) -> dict[str, list[float]]:
-        autoencoder.to(device)
-        unet.to(device)
-
         amp_enabled = device.type == "cuda"
 
         epoch_losses: list[float] = []
@@ -567,6 +569,7 @@ if __name__ == "__main__":
 
     ensure_model_type_directories()
     run_dir = create_run_directory("LDM")
+    run_start_time = time.perf_counter()
 
     train_loader, valid_loader, _ = get_mednist_dataloaders()
 
@@ -621,6 +624,7 @@ if __name__ == "__main__":
             "diffusion_channels": DIFFUSION_CHANNELS,
             "diffusion_attention_levels": DIFFUSION_ATTENTION_LEVELS,
             "diffusion_num_head_channels": DIFFUSION_NUM_HEAD_CHANNELS,
+            "diffusion_norm_num_groups": DIFFUSION_NORM_NUM_GROUPS,
             "diffusion_num_train_timesteps": DIFFUSION_NUM_TRAIN_TIMESTEPS,
             "diffusion_beta_start": DIFFUSION_BETA_START,
             "diffusion_beta_end": DIFFUSION_BETA_END,
@@ -652,7 +656,7 @@ if __name__ == "__main__":
     if device.type == "cuda":
         torch.cuda.empty_cache()
 
-    unet = LDMComponents.build_diffusion_unet().to(device)
+    unet = LDMComponents.build_diffusion_unet(device)
     LDMComponents.summarize_unet(unet)
     unet.to(device)
 
@@ -711,5 +715,6 @@ if __name__ == "__main__":
         "scale_factor": scale_factor,
         "autoencoder": autoencoder_metrics,
         "diffusion": diffusion_metrics,
+        "run_duration_seconds": time.perf_counter() - run_start_time,
     }
     save_json(metrics, run_dir / "metrics.json")

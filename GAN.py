@@ -1,4 +1,5 @@
 import contextlib
+import time
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +25,7 @@ from common import (
     save_two_curve_plot,
 )
 from settings import BATCH_SIZE, COMMON_NUM_EPOCHS, IMAGE_SIZE, TRAIN_VALID_RATIO
-from utils import create_run_directory, ensure_model_type_directories, save_animation_as_gif, save_json
+from utils import create_run_directory, ensure_model_type_directories, save_animation_as_gif, save_json, pgcd
 
 SPATIAL_DIMS = 2
 IN_CHANNELS = 1
@@ -32,11 +33,11 @@ OUT_CHANNELS = 1
 
 # Feature widths of the encoder/decoder blocks.
 # Increasing these usually improves expressiveness but increases memory and training time.
-CHANNELS = (16, 32, 64)
+CHANNELS = (16, 24, 32)
 
 # Number of latent channels produced by the encoder.
 # This controls how much information can be compressed in z.
-LATENT_CHANNELS = 6
+LATENT_CHANNELS = 16
 
 # Number of residual blocks per resolution stage in the autoencoder.
 # More blocks can improve quality, but make training heavier.
@@ -44,7 +45,7 @@ NUM_RES_BLOCKS = 2
 
 # GroupNorm groups used inside the model.
 # Using the first channel count is MONAI's common stable default for this setup.
-NORM_NUM_GROUPS = CHANNELS[0]
+NORM_NUM_GROUPS = pgcd(*CHANNELS)
 
 # Attention toggles per resolution level.
 # Kept disabled here because this MedNIST setup works well without attention overhead.
@@ -58,7 +59,7 @@ LEARNING_RATE_D = 5e-4
 
 # Weight for the latent KL regularization term.
 # Larger values force latent distributions closer to N(0, I), but can hurt reconstruction fidelity.
-KL_WEIGHT = 1e-5
+KL_WEIGHT = 1e-6
 
 # Weight for perceptual similarity.
 # Balances low-level pixel reconstruction with higher-level feature similarity.
@@ -66,7 +67,7 @@ PERCEPTUAL_WEIGHT = 1e-3
 
 # Weight for adversarial realism pressure.
 # Too high can destabilize training; too low can make outputs blurry.
-ADVERSARIAL_WEIGHT = 1e-1
+ADVERSARIAL_WEIGHT = 1e-2
 
 SAVE_BEST_MODEL_FROM_METRIC = True
 
@@ -172,9 +173,6 @@ class GANTraining:
         l1_loss_fn: nn.L1Loss,
         device: torch.device,
     ) -> tuple[dict[str, Any], dict[str, torch.Tensor]]:
-        model.to(device)
-        discriminator.to(device)
-
         train_generator_loss_list: list[float] = []
         train_discriminator_loss_list: list[float] = []
         valid_metric_list: list[float] = []
@@ -434,7 +432,7 @@ class GANVisualization:
         latent_2, _ = model.encode(inputs[4].unsqueeze(0))
 
         images = GANVisualization.interpolate_images(model, latent_1, latent_2, device, steps=64)
-        filename = run_dir / "mnist_interpolation.gif"
+        filename = run_dir / "mednist_interpolation.gif"
 
         save_animation_as_gif(images, filename=filename, interval=100)
         display(Image(filename=str(filename)))
@@ -445,6 +443,7 @@ if __name__ == "__main__":
 
     ensure_model_type_directories()
     run_dir = create_run_directory("GAN")
+    run_start_time = time.perf_counter()
 
     train_loader, valid_loader, test_loader = get_mednist_dataloaders()
 
@@ -528,7 +527,7 @@ if __name__ == "__main__":
 
     metrics = dict(training_metrics)
     metrics["test_reconstruction_metric"] = test_metric
-    save_json(metrics, run_dir / "metrics.json")
+    # save_json(metrics, run_dir / "metrics.json")
 
     GANVisualization.run_post_training_visualizations(
         model=model,
@@ -536,3 +535,6 @@ if __name__ == "__main__":
         device=device,
         run_dir=run_dir,
     )
+
+    metrics["run_duration_seconds"] = time.perf_counter() - run_start_time
+    save_json(metrics, run_dir / "metrics.json")

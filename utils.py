@@ -8,6 +8,7 @@ import numpy as np
 from matplotlib.animation import FuncAnimation
 
 from settings import MODEL_TYPES, RUN_DATETIME_FORMAT, RUNS_ROOT
+from functools import reduce
 
 
 def ensure_model_type_directories(
@@ -57,3 +58,20 @@ def save_animation_as_gif(
     ani = FuncAnimation(fig, update, frames=len(images), interval=interval, blit=True)
     ani.save(str(filename), writer="pillow", fps=1000 // interval)
     plt.close(fig)
+
+
+def _pgcd_two(a: int, b: int) -> int:
+    """Helper function for two numbers using your original logic."""
+    while b != 0:
+        a, b = b, a % b
+    return a
+
+
+def pgcd(*args: int) -> int:
+    """Calculates the GCD for an arbitrary number of integers."""
+    if not args:
+        raise ValueError("At least one argument must be provided.")
+
+    # reduce applies _pgcd_two cumulatively to the items of args
+    result = reduce(_pgcd_two, args)
+    return abs(result)
