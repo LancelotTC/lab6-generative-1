@@ -412,7 +412,7 @@ class GANVisualization:
         print(f"The latent sample is of size {z_mu.shape}")
 
         reconstruction = model.decode(z_mu)
-        print(f"The reconstrudted image is of size {reconstruction.shape}")
+        print(f"The reconstructed image is of size {reconstruction.shape}")
 
         inputs = batch_data["image"].to(device)
 

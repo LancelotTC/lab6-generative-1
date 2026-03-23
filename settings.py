@@ -43,7 +43,7 @@ MEDNIST_TRAIN_SECTION: str = "training"
 MEDNIST_VALID_SECTION: str = "validation"
 MEDNIST_LABELS: tuple[str, ...] = ("AbdomenCT", "BreastMRI", "ChestCT", "CXR", "Hand", "HeadCT")
 SELECTED_LABEL: str = MEDNIST_LABELS[4]  # Hand
-SELECTED_LABEL: str = MEDNIST_LABELS[3]  # CXR
+# SELECTED_LABEL: str = MEDNIST_LABELS[3]  # CXR
 
 # Run organization constants
 RUNS_ROOT: Path = Path("runs")

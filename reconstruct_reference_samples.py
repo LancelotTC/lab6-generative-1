@@ -212,7 +212,7 @@ def _select_reference_images(sample_count: int, seed: int, selected_label: str) 
         root_dir=DATA_ROOT_DIR,
         section=MEDNIST_VALID_SECTION,
         download=download,
-        seed=SEED,
+        seed=seed,
         cache_rate=0.0,
         num_workers=0,
         progress=False,

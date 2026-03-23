@@ -6,7 +6,9 @@ This document records configurations that have been executed, based on run artif
 
 I chose the `Hand` MedNIST subdataset for the main experiments because it is the easiest class to visually assess when checking whether generated images are correct or not.
 
-Out of curiosity, I also ran the current best-performing model on the `CXR` MedNIST subdataset to evaluate transfer of performance. The CXR-specific results will be added once they are available.
+I also evaluated one `CXR` run (`LDM` run `20260323_120641_328800`) for comparison.
+
+In this report, all runs are `Hand`-trained except `20260323_120641_328800`, which is `CXR`-trained.
 
 ## Hardware Specification
 
@@ -22,10 +24,10 @@ Out of curiosity, I also ran the current best-performing model on the `CXR` MedN
 
 ## Summary
 
-- GAN runs found: 5
-- LDM runs found: 5
-- Completed runs (metrics present): 9
-- Incomplete runs (metrics missing): 1
+- GAN runs found: 4
+- LDM runs found: 6
+- Completed runs (metrics present): 10
+- Incomplete runs (metrics missing): 0
 
 ## GAN Runs
 
@@ -34,6 +36,7 @@ Out of curiosity, I also ran the current best-performing model on the `CXR` MedN
 | Metric                         | Value        |
 | ------------------------------ | ------------ |
 | Status                         | completed    |
+| Selected Label                 | Hand         |
 | Epochs                         | 60           |
 | Batch Size                     | 64           |
 | Train/Valid Ratio              | 0.8          |
@@ -76,11 +79,25 @@ Out of curiosity, I also ran the current best-performing model on the `CXR` MedN
   </tr>
 </table>
 
+<table cellspacing="18" cellpadding="6">
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <img src="runs/GAN/20260322_174818_656884/plots/GAN%20-%20Deterministic%20Reference%20Reconstructions.png" width="972" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <sub>GAN - Deterministic Reference Reconstructions</sub>
+    </td>
+  </tr>
+</table>
+
 ### Run `20260322_205424_037424`
 
 | Metric                         | Value        |
 | ------------------------------ | ------------ |
 | Status                         | completed    |
+| Selected Label                 | Hand         |
 | Epochs                         | 60           |
 | Batch Size                     | 32           |
 | Train/Valid Ratio              | 0.95         |
@@ -123,11 +140,25 @@ Out of curiosity, I also ran the current best-performing model on the `CXR` MedN
   </tr>
 </table>
 
+<table cellspacing="18" cellpadding="6">
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <img src="runs/GAN/20260322_205424_037424/plots/GAN%20-%20Deterministic%20Reference%20Reconstructions.png" width="972" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <sub>GAN - Deterministic Reference Reconstructions</sub>
+    </td>
+  </tr>
+</table>
+
 ### Run `20260323_022333_502406`
 
 | Metric                         | Value        |
 | ------------------------------ | ------------ |
 | Status                         | completed    |
+| Selected Label                 | Hand         |
 | Epochs                         | 60           |
 | Batch Size                     | 64           |
 | Train/Valid Ratio              | 0.95         |
@@ -170,49 +201,15 @@ Out of curiosity, I also ran the current best-performing model on the `CXR` MedN
   </tr>
 </table>
 
-### Run `20260323_102522_535736`
-
-| Metric                         | Value        |
-| ------------------------------ | ------------ |
-| Status                         | incomplete   |
-| Epochs                         | 60           |
-| Batch Size                     | 64           |
-| Train/Valid Ratio              | 0.95         |
-| AE Channels                    | [16, 24, 32] |
-| Latent Channels                | 24           |
-| Residual Blocks                | 3            |
-| Discriminator Layers           | 3            |
-| Discriminator Channels         | 16           |
-| Learning Rate (Generator)      | 0.0001       |
-| Learning Rate (Discriminator)  | 0.0005       |
-| KL Weight                      | 1e-05        |
-| Perceptual Weight              | 0.001        |
-| Adversarial Weight             | 0.01         |
-| Best Validation Reconstruction | -            |
-| Test Reconstruction            | -            |
-| Run Duration (s)               | -            |
-
 <table cellspacing="18" cellpadding="6">
   <tr>
-    <td align="center" valign="top" width="33%">
-      <sub>Not available</sub>
-    </td>
-    <td align="center" valign="top" width="33%">
-      <sub>Not available</sub>
-    </td>
-    <td align="center" valign="top" width="33%">
-      <sub>Not available</sub>
+    <td align="center" valign="top" colspan="3">
+      <img src="runs/GAN/20260323_022333_502406/plots/GAN%20-%20Deterministic%20Reference%20Reconstructions.png" width="972" />
     </td>
   </tr>
   <tr>
-    <td align="center" valign="top" width="33%">
-      <sub>GAN - Adversarial Training Curves</sub>
-    </td>
-    <td align="center" valign="top" width="33%">
-      <sub>GAN - Latent Space (t-SNE 2D)</sub>
-    </td>
-    <td align="center" valign="top" width="33%">
-      <sub>GAN - Latent Interpolation.gif</sub>
+    <td align="center" valign="top" colspan="3">
+      <sub>GAN - Deterministic Reference Reconstructions</sub>
     </td>
   </tr>
 </table>
@@ -222,6 +219,7 @@ Out of curiosity, I also ran the current best-performing model on the `CXR` MedN
 | Metric                         | Value        |
 | ------------------------------ | ------------ |
 | Status                         | completed    |
+| Selected Label                 | Hand         |
 | Epochs                         | 60           |
 | Batch Size                     | 64           |
 | Train/Valid Ratio              | 0.95         |
@@ -264,6 +262,19 @@ Out of curiosity, I also ran the current best-performing model on the `CXR` MedN
   </tr>
 </table>
 
+<table cellspacing="18" cellpadding="6">
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <img src="runs/GAN/20260323_103245_605233/plots/GAN%20-%20Deterministic%20Reference%20Reconstructions.png" width="972" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <sub>GAN - Deterministic Reference Reconstructions</sub>
+    </td>
+  </tr>
+</table>
+
 ## LDM Runs
 
 ### Run `20260322_183659_301443`
@@ -271,6 +282,7 @@ Out of curiosity, I also ran the current best-performing model on the `CXR` MedN
 | Metric                             | Value        |
 | ---------------------------------- | ------------ |
 | Status                             | completed    |
+| Selected Label                     | Hand         |
 | Batch Size                         | 64           |
 | Train/Valid Ratio                  | 0.8          |
 | Autoencoder Epochs                 | 60           |
@@ -327,11 +339,25 @@ Out of curiosity, I also ran the current best-performing model on the `CXR` MedN
   </tr>
 </table>
 
+<table cellspacing="18" cellpadding="6">
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <img src="runs/LDM/20260322_183659_301443/plots/LDM%20-%20Deterministic%20Reference%20Reconstructions.png" width="972" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <sub>LDM - Deterministic Reference Reconstructions</sub>
+    </td>
+  </tr>
+</table>
+
 ### Run `20260322_211427_053137`
 
 | Metric                             | Value        |
 | ---------------------------------- | ------------ |
 | Status                             | completed    |
+| Selected Label                     | Hand         |
 | Batch Size                         | 32           |
 | Train/Valid Ratio                  | 0.95         |
 | Autoencoder Epochs                 | 60           |
@@ -388,11 +414,25 @@ Out of curiosity, I also ran the current best-performing model on the `CXR` MedN
   </tr>
 </table>
 
+<table cellspacing="18" cellpadding="6">
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <img src="runs/LDM/20260322_211427_053137/plots/LDM%20-%20Deterministic%20Reference%20Reconstructions.png" width="972" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <sub>LDM - Deterministic Reference Reconstructions</sub>
+    </td>
+  </tr>
+</table>
+
 ### Run `20260322_225037_317153`
 
 | Metric                             | Value        |
 | ---------------------------------- | ------------ |
 | Status                             | completed    |
+| Selected Label                     | Hand         |
 | Batch Size                         | 32           |
 | Train/Valid Ratio                  | 0.95         |
 | Autoencoder Epochs                 | 60           |
@@ -449,11 +489,25 @@ Out of curiosity, I also ran the current best-performing model on the `CXR` MedN
   </tr>
 </table>
 
+<table cellspacing="18" cellpadding="6">
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <img src="runs/LDM/20260322_225037_317153/plots/LDM%20-%20Deterministic%20Reference%20Reconstructions.png" width="972" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <sub>LDM - Deterministic Reference Reconstructions</sub>
+    </td>
+  </tr>
+</table>
+
 ### Run `20260323_005636_016702`
 
 | Metric                             | Value           |
 | ---------------------------------- | --------------- |
 | Status                             | completed       |
+| Selected Label                     | Hand            |
 | Batch Size                         | 64              |
 | Train/Valid Ratio                  | 0.95            |
 | Autoencoder Epochs                 | 60              |
@@ -510,11 +564,25 @@ Out of curiosity, I also ran the current best-performing model on the `CXR` MedN
   </tr>
 </table>
 
+<table cellspacing="18" cellpadding="6">
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <img src="runs/LDM/20260323_005636_016702/plots/LDM%20-%20Deterministic%20Reference%20Reconstructions.png" width="972" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <sub>LDM - Deterministic Reference Reconstructions</sub>
+    </td>
+  </tr>
+</table>
+
 ### Run `20260323_105355_312052`
 
 | Metric                             | Value         |
 | ---------------------------------- | ------------- |
 | Status                             | completed     |
+| Selected Label                     | Hand          |
 | Batch Size                         | 64            |
 | Train/Valid Ratio                  | 0.95          |
 | Autoencoder Epochs                 | 60            |
@@ -571,28 +639,42 @@ Out of curiosity, I also ran the current best-performing model on the `CXR` MedN
   </tr>
 </table>
 
+<table cellspacing="18" cellpadding="6">
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <img src="runs/LDM/20260323_105355_312052/plots/LDM%20-%20Deterministic%20Reference%20Reconstructions.png" width="972" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <sub>LDM - Deterministic Reference Reconstructions</sub>
+    </td>
+  </tr>
+</table>
+
 ### Run `20260323_120641_328800`
 
-| Metric | Value |
-|---|---|
-| Status | completed |
-| Batch Size | 64 |
-| Train/Valid Ratio | 0.95 |
-| Autoencoder Epochs | 60 |
-| Diffusion Epochs | 80 |
-| AE Channels | [24, 48, 64] |
-| Latent Channels | 12 |
-| Residual Blocks | 3 |
-| Discriminator Layers | 3 |
-| Discriminator Channels | 16 |
-| Diffusion Channels | [128, 256, 512] |
-| Diffusion Head Channels | [0, 256, 512] |
-| Diffusion Timesteps | 1000 |
-| Diffusion Beta Start | 0.0015 |
-| Diffusion Beta End | 0.0195 |
-| Last Validation Loss (Autoencoder) | 0.0299948 |
-| Last Validation Loss (Diffusion) | 0.227937 |
-| Run Duration (s) | 3938.95 |
+| Metric                             | Value           |
+| ---------------------------------- | --------------- |
+| Status                             | completed       |
+| Selected Label                     | CXR             |
+| Batch Size                         | 64              |
+| Train/Valid Ratio                  | 0.95            |
+| Autoencoder Epochs                 | 60              |
+| Diffusion Epochs                   | 80              |
+| AE Channels                        | [24, 48, 64]    |
+| Latent Channels                    | 12              |
+| Residual Blocks                    | 3               |
+| Discriminator Layers               | 3               |
+| Discriminator Channels             | 16              |
+| Diffusion Channels                 | [128, 256, 512] |
+| Diffusion Head Channels            | [0, 256, 512]   |
+| Diffusion Timesteps                | 1000            |
+| Diffusion Beta Start               | 0.0015          |
+| Diffusion Beta End                 | 0.0195          |
+| Last Validation Loss (Autoencoder) | 0.0299948       |
+| Last Validation Loss (Diffusion)   | 0.227937        |
+| Run Duration (s)                   | 3938.95         |
 
 <table cellspacing="18" cellpadding="6">
   <tr>
@@ -628,6 +710,19 @@ Out of curiosity, I also ran the current best-performing model on the `CXR` MedN
   <tr>
     <td align="center" valign="top" colspan="3">
       <sub>Diffusion Model - Decoded Intermediates Every 100 Steps</sub>
+    </td>
+  </tr>
+</table>
+
+<table cellspacing="18" cellpadding="6">
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <img src="runs/LDM/20260323_120641_328800/plots/LDM%20-%20Deterministic%20Reference%20Reconstructions.png" width="972" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center" valign="top" colspan="3">
+      <sub>LDM - Deterministic Reference Reconstructions</sub>
     </td>
   </tr>
 </table>

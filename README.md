@@ -70,6 +70,7 @@ Data loading is implemented in `common.py` via `MedNISTDataset`.
 Global/shared settings are defined in `settings.py`, including:
 
 - training/data constants (`NUM_EPOCHS`, `BATCH_SIZE`, `IMAGE_SIZE`, `SEED`)
+- selected MedNIST class (`SELECTED_LABEL`, default: `Hand`)
 - shared model constants (`AUTOENCODER_CHANNELS`, `LATENT_CHANNELS`, `NUM_RES_BLOCKS`, discriminator constants)
 - shared loss weights (`KL_WEIGHT`, `PERCEPTUAL_WEIGHT`, `ADVERSARIAL_WEIGHT`)
 - run directory format (`RUNS_ROOT`, `MODEL_TYPES`, `RUN_DATETIME_FORMAT`)
@@ -109,6 +110,8 @@ Per-run structure:
 `-- models/
 ```
 
+`hyperparameters.json` includes `common.selected_label`, which stores the MedNIST class used for that run.
+
 ### GAN artifacts
 
 `plots/`:
@@ -117,6 +120,8 @@ Per-run structure:
 - `GAN - Adversarial Training Curves.png`
 - `GAN - Latent Space (t-SNE 2D).png`
 - `GAN - Latent Interpolation.gif`
+- `GAN - Deterministic Reference Reconstructions.png`
+- `GAN - Deterministic Reference Reconstructions.json`
 
 `models/`:
 
@@ -134,6 +139,8 @@ Per-run structure:
 - `Diffusion Model - Latent Space (t-SNE 2D).png`
 - `Diffusion Model - Decoded Intermediates Every 100 Steps.png`
 - `MedNIST Interpolation.gif`
+- `LDM - Deterministic Reference Reconstructions.png`
+- `LDM - Deterministic Reference Reconstructions.json`
 
 `models/`:
 
@@ -141,7 +148,22 @@ Per-run structure:
 - `diffusion_model_unet_state_dict.pth`
 - `generated_sample.pt`
 
-## 8. Notes on Method
+## 8. Deterministic Reconstruction Utility
+
+Generate deterministic 10-image reference-vs-reconstruction comparisons for all loadable runs:
+
+```bash
+python reconstruct_reference_samples.py
+```
+
+Behavior:
+
+- scans every run under `runs/GAN/*` and `runs/LDM/*`
+- loads each run checkpoint and reconstructs 10 deterministic validation images
+- uses run-specific label metadata from `hyperparameters.json -> common.selected_label` (or `settings.SELECTED_LABEL` when metadata is absent)
+- saves outputs under each run's `plots/`
+
+## 9. Notes on Method
 
 - GAN pipeline: adversarial VAE-style autoencoder training with reconstruction, KL, perceptual, and adversarial losses.
 - LDM pipeline:
@@ -149,9 +171,9 @@ Per-run structure:
   - stage 2: diffusion UNet training in latent space with DDPM scheduler
 - Latent-space visualization uses t-SNE projection with equal x/y axis scaling for geometric consistency in 2D plots.
 
-## 9. Additions Relative to the Original Baseline Code
+## 10. Additions Relative to the Original Baseline Code
 
-The current project extends the baseline implementation with the following additions:
+Compared with the provided baseline implementation, the project includes:
 
 - Separation of concerns into reusable modules:
   - shared constants in `settings.py`
