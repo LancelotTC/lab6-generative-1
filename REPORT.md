@@ -765,6 +765,6 @@ For the rest of the results, I tried significantly lower diffusion channels, so 
 
 I think it is also worth noting that the LDM is significantly slower than the GAN. It takes roughly an hour and a half to run on my RTX 4060Ti with 16 GB of VRAM, compared to 20 minutes give or take a minute of train time for the VAE-only GAN.
 
-I have also tried to only increase latent channels (GAN: 20260323_103245_605233, LDM: 20260323_105355_312052) to 24, and from what I observed, results were rather poor on both sides, and more noticeably so on the LDM's Diffusion Model - Decoded Intermediates Every 100 Steps.png file where a full hand could not be reconstructed even after the last steps.
+I have also tried to only increase latent channels (GAN: 20260323_103245_605233, LDM: 20260323_105355_312052) to 24, and from what I observed, results were rather unsignificant on both sides. I could however see a difference in the LDM's Diffusion Model - Decoded Intermediates Every 100 Steps.png file where a full hand could not be reconstructed even after the last steps. That said, contrary to other LDM runs, it was not as blurry.
 
 All in all, my best result, in my opinion, was with the Latent Diffusion Model with the Diffusion Model having [128, 256, 512] channels with 12 latent channels.
