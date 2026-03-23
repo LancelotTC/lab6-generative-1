@@ -1,6 +1,6 @@
 /__pycache__
 /data
-/runs
+# /runs
 /model_structures
 
 tempCodeRunnerFile.*
