@@ -2,6 +2,9 @@
 
 This document records configurations that have been executed, based on run artifacts in `runs/`.
 
+To correctly render the images embedded in this report, the repository assets must be present locally.  
+I recommend to clone the repository: `https://github.com/LancelotTC/lab6-generative-1`.
+
 ## Dataset Choice
 
 I chose the `Hand` MedNIST subdataset for the main experiments because it is the easiest class to visually assess when checking whether generated images are correct or not.

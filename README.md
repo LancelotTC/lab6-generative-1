@@ -9,6 +9,8 @@ This repository contains two training pipelines for class-conditional MedNIST im
 
 Both pipelines share common data handling and shared architecture/training constants, and each run is recorded under a timestamped directory.
 
+Repository URL: `https://github.com/LancelotTC/lab6-generative-1`
+
 ## 2. Repository Structure
 
 ```text
