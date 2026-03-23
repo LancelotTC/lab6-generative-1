@@ -273,12 +273,13 @@ def _save_reconstruction_panel(
     reconstructions_np = reconstructions.squeeze(1).numpy()
     errors_np = np.abs(originals_np - reconstructions_np)
     per_image_mae = errors_np.mean(axis=(1, 2))
+    max_error = max(0.1, float(errors_np.max()))
 
     figure, axes = plt.subplots(3, len(sample_indices), figsize=(1.9 * len(sample_indices), 5.8))
     for column, dataset_index in enumerate(sample_indices):
         axes[0, column].imshow(originals_np[column], cmap="gray", vmin=0.0, vmax=1.0)
         axes[1, column].imshow(reconstructions_np[column], cmap="gray", vmin=0.0, vmax=1.0)
-        axes[2, column].imshow(errors_np[column], cmap="magma", vmin=0.0, vmax=max(0.1, float(errors_np.max())))
+        axes[2, column].imshow(errors_np[column], cmap="magma", vmin=0.0, vmax=max_error)
 
         axes[0, column].set_title(f"idx {dataset_index}")
         axes[1, column].set_title(f"MAE {per_image_mae[column]:.4f}")
@@ -286,14 +287,21 @@ def _save_reconstruction_panel(
         for row in range(3):
             axes[row, column].axis("off")
 
-    axes[0, 0].set_ylabel("Original", fontsize=11)
-    axes[1, 0].set_ylabel("Reconstruction", fontsize=11)
-    axes[2, 0].set_ylabel("Abs Error", fontsize=11)
+    axes[0, 0].set_ylabel("Original (x)", fontsize=11)
+    axes[1, 0].set_ylabel("Reconstruction (x_hat)", fontsize=11)
+    axes[2, 0].set_ylabel("Abs Error |x - x_hat|", fontsize=11)
 
     figure.suptitle(
         f"{model_type} deterministic reconstructions\n"
         f"run={run_info.run_dir.name} | score={run_info.score:.6f} | label={selected_label} | mean MAE={per_image_mae.mean():.4f}",
         fontsize=13,
+    )
+    figure.text(
+        0.5,
+        0.01,
+        "Row 3 visualizes per-pixel absolute error |x - x_hat|. Brighter values indicate larger reconstruction error.",
+        ha="center",
+        fontsize=9,
     )
     figure.tight_layout()
 
@@ -309,6 +317,11 @@ def _save_reconstruction_panel(
         "selected_label": selected_label,
         "sample_indices": sample_indices,
         "selection_dataset": "MedNIST validation section with deterministic no-cache preprocessing",
+        "panel_rows": {
+            "row_1": "Original (x)",
+            "row_2": "Reconstruction (x_hat)",
+            "row_3": "Absolute error map |x - x_hat|",
+        },
         "score": run_info.score,
         "mean_mae": float(per_image_mae.mean()),
         "per_image_mae": [float(value) for value in per_image_mae],

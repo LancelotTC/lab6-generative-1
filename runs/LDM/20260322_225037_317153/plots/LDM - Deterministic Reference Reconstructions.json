@@ -17,6 +17,11 @@
     456
   ],
   "selection_dataset": "MedNIST validation section with deterministic no-cache preprocessing",
+  "panel_rows": {
+    "row_1": "Original (x)",
+    "row_2": "Reconstruction (x_hat)",
+    "row_3": "Absolute error map |x - x_hat|"
+  },
   "score": 0.03912007865997461,
   "mean_mae": 0.05202244967222214,
   "per_image_mae": [

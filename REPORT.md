@@ -20,7 +20,15 @@ In this report, all runs are `Hand`-trained except `20260323_120641_328800`, whi
 ## Data Source
 
 - `runs/*/*/hyperparameters.json`
-- `runs/*/*/metrics.json` (when present)
+- `runs/*/*/metrics.json`
+
+## Reconstruction Panel Interpretation
+
+For `GAN - Deterministic Reference Reconstructions` and `LDM - Deterministic Reference Reconstructions`:
+
+- Row 1: original reference image (`x`)
+- Row 2: deterministic reconstruction from latent mean (`x_hat`)
+- Row 3: absolute error map (`|x - x_hat|`), where brighter values indicate larger reconstruction error
 
 ## Summary
 
@@ -747,7 +755,7 @@ Case in point: when I tried to drastically decrease the diffusion model channels
 
 **When it came to the results of the VAE-only GAN (all):**
 
-Interpolated gif showed visible hands, albeit blurry. Intermediate visualisations, as it went through the latent space, looked less convincing and more scary, but overall a better result that originally saw in class (which had a latent space of 3).
+Interpolated gif showed visible hands, albeit blurry. Intermediate visualisations, as it went through the latent space, looked less convincing and more scary, but overall a better result that originally saw in class (which had a latent channels of 3).
 
 **When it came to the results of the Latent Diffusion Model (20260323_005636_016702):**
 
@@ -757,6 +765,6 @@ For the rest of the results, I tried significantly lower diffusion channels, so 
 
 I think it is also worth noting that the LDM is significantly slower than the GAN. It takes roughly an hour and a half to run on my RTX 4060Ti with 16 GB of VRAM, compared to 20 minutes give or take a minute of train time for the VAE-only GAN.
 
-I have also tried to only increase latent space (GAN: 20260323_103245_605233, LDM: 20260323_105355_312052) to 24, and from what I observed, results were rather poor on both sides, and more noticeably so on the LDM's Diffusion Model - Decoded Intermediates Every 100 Steps.png file where a full hand could not be reconstructed even after the last steps.
+I have also tried to only increase latent channels (GAN: 20260323_103245_605233, LDM: 20260323_105355_312052) to 24, and from what I observed, results were rather poor on both sides, and more noticeably so on the LDM's Diffusion Model - Decoded Intermediates Every 100 Steps.png file where a full hand could not be reconstructed even after the last steps.
 
 All in all, my best result, in my opinion, was with the Latent Diffusion Model with the Diffusion Model having [128, 256, 512] channels with 12 latent channels.

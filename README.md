@@ -162,6 +162,10 @@ Behavior:
 - loads each run checkpoint and reconstructs 10 deterministic validation images
 - uses run-specific label metadata from `hyperparameters.json -> common.selected_label` (or `settings.SELECTED_LABEL` when metadata is absent)
 - saves outputs under each run's `plots/`
+- reconstruction panel interpretation:
+  - row 1: original reference image (`x`)
+  - row 2: deterministic reconstruction from latent mean (`x_hat`)
+  - row 3: per-pixel absolute error map (`|x - x_hat|`), where brighter values mean larger error
 
 ## 9. Notes on Method
 
