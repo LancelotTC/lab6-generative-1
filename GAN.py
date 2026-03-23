@@ -3,7 +3,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
@@ -35,7 +34,6 @@ from settings import (
     DISCRIMINATOR_NUM_LAYERS_D,
     IMAGE_SIZE,
     IN_CHANNELS,
-    INTERMEDIATE_DECODE_DIVISOR,
     INTERPOLATION_STEPS,
     KL_WEIGHT,
     LATENT_CHANNELS,
@@ -57,7 +55,6 @@ NORM_NUM_GROUPS = pgcd(*AUTOENCODER_CHANNELS)
 # "Hidden layers" of the discriminator
 # Doubles for each block until the last, where it is squashed back to 1 (1x6x6 for 36 patches)
 SAVE_BEST_MODEL_FROM_METRIC = True
-INTERMEDIATE_DECODE_STEPS = INTERPOLATION_STEPS // INTERMEDIATE_DECODE_DIVISOR
 
 
 class GANComponents:
@@ -390,39 +387,6 @@ class GANVisualization:
             )
 
     @staticmethod
-    def save_decoded_intermediates_strip(
-        images: list[np.ndarray],
-        output_path: Path,
-        intermediate_decode_steps: int,
-    ) -> None:
-        if not images:
-            raise ValueError("No images available to build decoded intermediates plot.")
-
-        step = max(1, intermediate_decode_steps)
-        selected_indices = list(range(0, len(images), step))
-        if selected_indices[-1] != len(images) - 1:
-            selected_indices.append(len(images) - 1)
-        selected_images = [images[idx] for idx in selected_indices]
-
-        max_columns = 10
-        rows = int(np.ceil(len(selected_images) / max_columns))
-        columns = int(np.ceil(len(selected_images) / rows))
-
-        figure, axes = plt.subplots(rows, columns, figsize=(columns * 1.7, rows * 1.7))
-        axes_array = np.array(axes, ndmin=1).ravel()
-
-        for index, image in enumerate(selected_images):
-            axes_array[index].imshow(image, vmin=0, vmax=1, cmap="gray")
-            axes_array[index].axis("off")
-
-        for index in range(len(selected_images), len(axes_array)):
-            axes_array[index].axis("off")
-
-        figure.tight_layout()
-        figure.savefig(output_path, dpi=300, bbox_inches="tight")
-        plt.close(figure)
-
-    @staticmethod
     def run_post_training_visualizations(
         model: AutoencoderKL,
         test_loader: DataLoader,
@@ -461,14 +425,9 @@ class GANVisualization:
             device=device,
             steps=INTERPOLATION_STEPS,
         )
-        filename = plots_dir / "MedNIST Interpolation.gif"
+        filename = plots_dir / "GAN - Latent Interpolation.gif"
 
         save_animation_as_gif(images, filename=filename, interval=100)
-        GANVisualization.save_decoded_intermediates_strip(
-            images=images,
-            output_path=plots_dir / "GAN - Decoded Intermediates Every 100 Steps.png",
-            intermediate_decode_steps=INTERMEDIATE_DECODE_STEPS,
-        )
 
 
 if __name__ == "__main__":

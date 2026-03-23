@@ -1,0 +1,59 @@
+{
+  "model_type": "LDM",
+  "common": {
+    "batch_size": 64,
+    "image_size": 64,
+    "train_valid_ratio": 0.95
+  },
+  "ldm_specific": {
+    "autoencoder_channels": [
+      24,
+      48,
+      64
+    ],
+    "latent_channels": 12,
+    "num_res_blocks": 3,
+    "norm_num_groups": 8,
+    "attention_levels": [
+      false,
+      false,
+      false
+    ],
+    "with_encoder_nonlocal_attn": false,
+    "with_decoder_nonlocal_attn": false,
+    "discriminator_num_layers_d": 3,
+    "discriminator_channels": 16,
+    "autoencoder_learning_rate": 0.0001,
+    "discriminator_learning_rate": 0.0005,
+    "diffusion_learning_rate": 0.0001,
+    "kl_weight": 1e-06,
+    "perceptual_weight": 0.01,
+    "adversarial_weight": 0.01,
+    "autoencoder_max_epochs": 60,
+    "autoencoder_val_interval": 10,
+    "autoencoder_warm_up_n_epochs": 10,
+    "diffusion_max_epochs": 80,
+    "diffusion_val_interval": 40,
+    "diffusion_channels": [
+      128,
+      256,
+      512
+    ],
+    "diffusion_attention_levels": [
+      false,
+      true,
+      true
+    ],
+    "diffusion_num_head_channels": [
+      0,
+      256,
+      512
+    ],
+    "diffusion_norm_num_groups": 128,
+    "diffusion_num_train_timesteps": 1000,
+    "diffusion_beta_start": 0.0015,
+    "diffusion_beta_end": 0.0195,
+    "diffusion_schedule": "linear_beta",
+    "diffusion_num_inference_steps": 1000
+  }
+}

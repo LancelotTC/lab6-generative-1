@@ -1,0 +1,34 @@
+{
+  "model_type": "GAN",
+  "common": {
+    "epochs": 60,
+    "batch_size": 64,
+    "image_size": 64,
+    "train_valid_ratio": 0.95
+  },
+  "gan_specific": {
+    "spatial_dims": 2,
+    "in_channels": 1,
+    "out_channels": 1,
+    "channels": [
+      24,
+      48,
+      64
+    ],
+    "latent_channels": 12,
+    "num_res_blocks": 3,
+    "norm_num_groups": 8,
+    "attention_levels": [
+      false,
+      false,
+      false
+    ],
+    "num_layers_d": 3,
+    "discriminator_channels": 16,
+    "learning_rate_g": 0.0001,
+    "learning_rate_d": 0.0005,
+    "kl_weight": 1e-06,
+    "perceptual_weight": 0.01,
+    "adversarial_weight": 0.01
+  }
+}

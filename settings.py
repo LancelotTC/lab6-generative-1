@@ -30,8 +30,8 @@ DISCRIMINATOR_CHANNELS: int = 16
 AUTOENCODER_LEARNING_RATE: float = 1e-4
 DISCRIMINATOR_LEARNING_RATE: float = 5e-4
 
-KL_WEIGHT: float = 1e-6
-PERCEPTUAL_WEIGHT: float = 1e-2
+KL_WEIGHT: float = 1e-5
+PERCEPTUAL_WEIGHT: float = 1e-3
 ADVERSARIAL_WEIGHT: float = 1e-2
 
 INTERPOLATION_STEPS: int = 64
@@ -43,6 +43,7 @@ MEDNIST_TRAIN_SECTION: str = "training"
 MEDNIST_VALID_SECTION: str = "validation"
 MEDNIST_LABELS: tuple[str, ...] = ("AbdomenCT", "BreastMRI", "ChestCT", "CXR", "Hand", "HeadCT")
 SELECTED_LABEL: str = MEDNIST_LABELS[4]  # Hand
+SELECTED_LABEL: str = MEDNIST_LABELS[3]  # CXR
 
 # Run organization constants
 RUNS_ROOT: Path = Path("runs")
