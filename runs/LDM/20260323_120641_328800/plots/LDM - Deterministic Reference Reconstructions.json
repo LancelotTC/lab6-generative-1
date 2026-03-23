@@ -1,0 +1,34 @@
+{
+  "model_type": "LDM",
+  "run_dir": "runs\\LDM\\20260323_120641_328800",
+  "checkpoint_path": "runs\\LDM\\20260323_120641_328800\\models\\autoencoderkl_for_diffusion_state_dict.pth",
+  "selection_seed": 0,
+  "selected_label": "CXR",
+  "sample_indices": [
+    644,
+    778,
+    1001,
+    193,
+    407,
+    308,
+    541,
+    992,
+    545,
+    69
+  ],
+  "selection_dataset": "MedNIST validation section with deterministic no-cache preprocessing",
+  "score": 0.02999478924487318,
+  "mean_mae": 0.028185512870550156,
+  "per_image_mae": [
+    0.032814860343933105,
+    0.029810365289449692,
+    0.016841618344187737,
+    0.029493268579244614,
+    0.02485966868698597,
+    0.028017515316605568,
+    0.02200375683605671,
+    0.047059785574674606,
+    0.025403738021850586,
+    0.025550533086061478
+  ]
+}

@@ -5,7 +5,7 @@ import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -42,59 +42,89 @@ def _load_json(file_path: Path) -> dict[str, Any]:
     return json.loads(file_path.read_text(encoding="utf-8"))
 
 
-def _find_best_loadable_run(model_type: str) -> ReconstructionRun | None:
-    model_root = RUNS_ROOT / model_type
-    if not model_root.exists():
-        return None
-
+def _get_checkpoint_name_and_score_fn(model_type: str) -> tuple[str, Callable[[dict[str, Any]], float]]:
     if model_type == "GAN":
         checkpoint_name = "best_test_lossmodel.pth"
 
         def get_score(metrics: dict[str, Any]) -> float:
-            return float(metrics["best_valid_metric"])
+            return float(metrics.get("best_valid_metric", math.inf))
 
-    elif model_type == "LDM":
+        return checkpoint_name, get_score
+
+    if model_type == "LDM":
         checkpoint_name = "autoencoderkl_for_diffusion_state_dict.pth"
 
         def get_score(metrics: dict[str, Any]) -> float:
             val_losses = metrics.get("autoencoder", {}).get("val_recon_losses", [])
             return min(float(loss) for loss in val_losses) if val_losses else math.inf
 
-    else:
-        raise ValueError(f"Unsupported model_type: {model_type}")
+        return checkpoint_name, get_score
 
-    best_run: ReconstructionRun | None = None
+    raise ValueError(f"Unsupported model_type: {model_type}")
+
+
+def _collect_loadable_runs(model_type: str) -> list[ReconstructionRun]:
+    model_root = RUNS_ROOT / model_type
+    if not model_root.exists():
+        return []
+
+    checkpoint_name, get_score = _get_checkpoint_name_and_score_fn(model_type)
+    collected_runs: list[ReconstructionRun] = []
 
     for run_dir in sorted(model_root.glob("*")):
         if not run_dir.is_dir():
             continue
 
         metrics_path = run_dir / "metrics.json"
+        hyperparameters_path = run_dir / "hyperparameters.json"
         checkpoint_path = run_dir / "models" / checkpoint_name
 
-        if not metrics_path.exists() or not checkpoint_path.exists():
+        if not metrics_path.exists() or not hyperparameters_path.exists() or not checkpoint_path.exists():
             continue
 
         score = get_score(_load_json(metrics_path))
         if not math.isfinite(score):
             continue
 
-        candidate = ReconstructionRun(
-            model_type=model_type,
-            run_dir=run_dir,
-            checkpoint_path=checkpoint_path,
-            score=score,
+        collected_runs.append(
+            ReconstructionRun(
+                model_type=model_type,
+                run_dir=run_dir,
+                checkpoint_path=checkpoint_path,
+                score=score,
+            )
         )
-        if best_run is None or candidate.score < best_run.score:
-            best_run = candidate
 
-    return best_run
+    return collected_runs
+
+
+def _resolve_run_label(hyperparameters: dict[str, Any]) -> str:
+    candidate_paths = (
+        ("selected_label",),
+        ("common", "selected_label"),
+        ("gan_specific", "selected_label"),
+        ("ldm_specific", "selected_label"),
+    )
+
+    for path in candidate_paths:
+        value: Any = hyperparameters
+        for key in path:
+            if not isinstance(value, dict) or key not in value:
+                value = None
+                break
+            value = value[key]
+        if isinstance(value, str) and value:
+            return value
+
+    return SELECTED_LABEL
 
 
 def _build_autoencoder_from_hyperparameters(
     model_type: str,
     hyperparameters: dict[str, Any],
     device: torch.device,
+    with_encoder_nonlocal_attn_override: bool | None = None,
+    with_decoder_nonlocal_attn_override: bool | None = None,
 ) -> AutoencoderKL:
     if model_type == "GAN":
         config = hyperparameters["gan_specific"]
@@ -105,6 +135,13 @@ def _build_autoencoder_from_hyperparameters(
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
 
+    with_encoder_nonlocal_attn = bool(config.get("with_encoder_nonlocal_attn", False))
+    with_decoder_nonlocal_attn = bool(config.get("with_decoder_nonlocal_attn", False))
+    if with_encoder_nonlocal_attn_override is not None:
+        with_encoder_nonlocal_attn = with_encoder_nonlocal_attn_override
+    if with_decoder_nonlocal_attn_override is not None:
+        with_decoder_nonlocal_attn = with_decoder_nonlocal_attn_override
+
     model = AutoencoderKL(
         spatial_dims=int(config.get("spatial_dims", 2)),
         in_channels=int(config.get("in_channels", 1)),
@@ -114,15 +151,62 @@ def _build_autoencoder_from_hyperparameters(
         num_res_blocks=config["num_res_blocks"],
         norm_num_groups=int(config["norm_num_groups"]),
         attention_levels=tuple(bool(level) for level in config["attention_levels"]),
-        with_encoder_nonlocal_attn=bool(config.get("with_encoder_nonlocal_attn", False)),
-        with_decoder_nonlocal_attn=bool(config.get("with_decoder_nonlocal_attn", False)),
+        with_encoder_nonlocal_attn=with_encoder_nonlocal_attn,
+        with_decoder_nonlocal_attn=with_decoder_nonlocal_attn,
     )
     model.to(device)
     model.eval()
     return model
 
 
-def _select_reference_images(sample_count: int, seed: int) -> tuple[torch.Tensor, list[int]]:
+def _load_model_with_state_dict(
+    model_type: str,
+    hyperparameters: dict[str, Any],
+    checkpoint_path: Path,
+    device: torch.device,
+) -> AutoencoderKL:
+    state_dict = torch.load(checkpoint_path, map_location=device)
+
+    model = _build_autoencoder_from_hyperparameters(
+        model_type=model_type,
+        hyperparameters=hyperparameters,
+        device=device,
+    )
+
+    try:
+        model.load_state_dict(state_dict, strict=True)
+        return model
+    except RuntimeError as first_error:
+        encoder_has_attn = any(key.startswith("encoder") and ".attn." in key for key in state_dict)
+        decoder_has_attn = any(key.startswith("decoder") and ".attn." in key for key in state_dict)
+
+        config_key = "gan_specific" if model_type == "GAN" else "ldm_specific"
+        config = hyperparameters.get(config_key, {})
+        current_encoder_nonlocal = bool(config.get("with_encoder_nonlocal_attn", False))
+        current_decoder_nonlocal = bool(config.get("with_decoder_nonlocal_attn", False))
+
+        should_retry = (
+            encoder_has_attn != current_encoder_nonlocal
+            or decoder_has_attn != current_decoder_nonlocal
+        )
+        if not should_retry:
+            raise first_error
+
+        fallback_model = _build_autoencoder_from_hyperparameters(
+            model_type=model_type,
+            hyperparameters=hyperparameters,
+            device=device,
+            with_encoder_nonlocal_attn_override=encoder_has_attn,
+            with_decoder_nonlocal_attn_override=decoder_has_attn,
+        )
+        try:
+            fallback_model.load_state_dict(state_dict, strict=True)
+            return fallback_model
+        except RuntimeError:
+            raise first_error
+
+
+def _select_reference_images(sample_count: int, seed: int, selected_label: str) -> tuple[torch.Tensor, list[int]]:
     download = not os.path.exists(MEDNIST_DATA_DIR)
     source_dataset = MedNISTDataset(
         root_dir=DATA_ROOT_DIR,
@@ -134,9 +218,9 @@ def _select_reference_images(sample_count: int, seed: int) -> tuple[torch.Tensor
         progress=False,
     )
     datalist = [
-        {"image": item["image"], "label": SELECTED_LABEL}
+        {"image": item["image"], "label": selected_label}
         for item in source_dataset.data
-        if item["class_name"] == SELECTED_LABEL
+        if item["class_name"] == selected_label
     ]
 
     eval_transforms = Compose(
@@ -157,7 +241,7 @@ def _select_reference_images(sample_count: int, seed: int) -> tuple[torch.Tensor
     dataset = Dataset(data=datalist, transform=eval_transforms)
 
     if len(dataset) == 0:
-        raise ValueError("The selected test dataset is empty.")
+        raise ValueError(f"The selected validation dataset is empty for label '{selected_label}'.")
 
     count = min(sample_count, len(dataset))
     generator = torch.Generator().manual_seed(seed)
@@ -180,6 +264,7 @@ def _save_reconstruction_panel(
     originals: torch.Tensor,
     reconstructions: torch.Tensor,
     sample_indices: list[int],
+    selected_label: str,
 ) -> None:
     plots_dir = run_info.run_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
@@ -207,7 +292,7 @@ def _save_reconstruction_panel(
 
     figure.suptitle(
         f"{model_type} deterministic reconstructions\n"
-        f"run={run_info.run_dir.name} | score={run_info.score:.6f} | label={SELECTED_LABEL} | mean MAE={per_image_mae.mean():.4f}",
+        f"run={run_info.run_dir.name} | score={run_info.score:.6f} | label={selected_label} | mean MAE={per_image_mae.mean():.4f}",
         fontsize=13,
     )
     figure.tight_layout()
@@ -221,7 +306,7 @@ def _save_reconstruction_panel(
         "run_dir": str(run_info.run_dir),
         "checkpoint_path": str(run_info.checkpoint_path),
         "selection_seed": SEED,
-        "selected_label": SELECTED_LABEL,
+        "selected_label": selected_label,
         "sample_indices": sample_indices,
         "selection_dataset": "MedNIST validation section with deterministic no-cache preprocessing",
         "score": run_info.score,
@@ -234,31 +319,60 @@ def _save_reconstruction_panel(
 
 def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    reference_images, sample_indices = _select_reference_images(sample_count=SAMPLE_COUNT, seed=SEED)
-    print(f"Selected {len(sample_indices)} deterministic reference images for label '{SELECTED_LABEL}': {sample_indices}")
+    reference_cache: dict[str, tuple[torch.Tensor, list[int]]] = {}
+    total_saved = 0
 
     for model_type in ("GAN", "LDM"):
-        run_info = _find_best_loadable_run(model_type)
-        if run_info is None:
-            print(f"[skip] {model_type}: no run with both metrics and a reconstruction checkpoint was found.")
+        runs = _collect_loadable_runs(model_type)
+        if not runs:
+            print(f"[skip] {model_type}: no run with metrics, hyperparameters, and checkpoint was found.")
             continue
 
-        hyperparameters = _load_json(run_info.run_dir / "hyperparameters.json")
-        model = _build_autoencoder_from_hyperparameters(model_type, hyperparameters, device)
-        state_dict = torch.load(run_info.checkpoint_path, map_location=device)
-        model.load_state_dict(state_dict)
+        print(f"[info] {model_type}: processing {len(runs)} runs.")
 
-        reconstructions = _reconstruct_with_mean_latent(model, reference_images, device)
-        _save_reconstruction_panel(
-            model_type=model_type,
-            run_info=run_info,
-            originals=reference_images,
-            reconstructions=reconstructions,
-            sample_indices=sample_indices,
-        )
-        print(
-            f"[saved] {model_type}: {run_info.run_dir / 'plots' / f'{model_type} - Deterministic Reference Reconstructions.png'}"
-        )
+        for run_info in runs:
+            try:
+                hyperparameters = _load_json(run_info.run_dir / "hyperparameters.json")
+                selected_label = _resolve_run_label(hyperparameters)
+
+                if selected_label not in reference_cache:
+                    reference_cache[selected_label] = _select_reference_images(
+                        sample_count=SAMPLE_COUNT,
+                        seed=SEED,
+                        selected_label=selected_label,
+                    )
+                    selected_indices = reference_cache[selected_label][1]
+                    print(
+                        f"[info] cached {len(selected_indices)} deterministic reference images "
+                        f"for label '{selected_label}': {selected_indices}"
+                    )
+
+                reference_images, sample_indices = reference_cache[selected_label]
+                model = _load_model_with_state_dict(
+                    model_type=model_type,
+                    hyperparameters=hyperparameters,
+                    checkpoint_path=run_info.checkpoint_path,
+                    device=device,
+                )
+
+                reconstructions = _reconstruct_with_mean_latent(model, reference_images, device)
+                _save_reconstruction_panel(
+                    model_type=model_type,
+                    run_info=run_info,
+                    originals=reference_images,
+                    reconstructions=reconstructions,
+                    sample_indices=sample_indices,
+                    selected_label=selected_label,
+                )
+                total_saved += 1
+                print(
+                    f"[saved] {model_type} {run_info.run_dir.name}: "
+                    f"{run_info.run_dir / 'plots' / f'{model_type} - Deterministic Reference Reconstructions.png'}"
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"[skip] {model_type} {run_info.run_dir.name}: {exc}")
+
+    print(f"[done] generated reconstruction comparisons for {total_saved} runs.")
 
 
 if __name__ == "__main__":

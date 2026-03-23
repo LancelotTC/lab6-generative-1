@@ -41,6 +41,7 @@ from settings import (
     NUM_RES_BLOCKS,
     OUT_CHANNELS,
     PERCEPTUAL_WEIGHT,
+    SELECTED_LABEL,
     SPATIAL_DIMS,
     TRAIN_VALID_RATIO,
     WITH_DECODER_NONLOCAL_ATTN,
@@ -468,6 +469,7 @@ if __name__ == "__main__":
             "batch_size": BATCH_SIZE,
             "image_size": IMAGE_SIZE,
             "train_valid_ratio": TRAIN_VALID_RATIO,
+            "selected_label": SELECTED_LABEL,
         },
         "gan_specific": {
             "spatial_dims": SPATIAL_DIMS,

@@ -4,7 +4,8 @@
     "epochs": 60,
     "batch_size": 64,
     "image_size": 64,
-    "train_valid_ratio": 0.95
+    "train_valid_ratio": 0.95,
+    "selected_label": "Hand"
   },
   "gan_specific": {
     "spatial_dims": 2,

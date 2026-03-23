@@ -1,0 +1,34 @@
+{
+  "model_type": "LDM",
+  "run_dir": "runs\\LDM\\20260322_183659_301443",
+  "checkpoint_path": "runs\\LDM\\20260322_183659_301443\\models\\autoencoderkl_for_diffusion_state_dict.pth",
+  "selection_seed": 0,
+  "selected_label": "Hand",
+  "sample_indices": [
+    1004,
+    828,
+    354,
+    51,
+    705,
+    384,
+    31,
+    930,
+    679,
+    456
+  ],
+  "selection_dataset": "MedNIST validation section with deterministic no-cache preprocessing",
+  "score": 0.02546514756977558,
+  "mean_mae": 0.024263670668005943,
+  "per_image_mae": [
+    0.021592577919363976,
+    0.034384410828351974,
+    0.02009601518511772,
+    0.01832723617553711,
+    0.01764000579714775,
+    0.03234940022230148,
+    0.02260957658290863,
+    0.022359998896718025,
+    0.02973046898841858,
+    0.02354702353477478
+  ]
+}

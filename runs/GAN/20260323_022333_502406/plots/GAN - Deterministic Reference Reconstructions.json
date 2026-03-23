@@ -1,0 +1,34 @@
+{
+  "model_type": "GAN",
+  "run_dir": "runs\\GAN\\20260323_022333_502406",
+  "checkpoint_path": "runs\\GAN\\20260323_022333_502406\\models\\best_test_lossmodel.pth",
+  "selection_seed": 0,
+  "selected_label": "Hand",
+  "sample_indices": [
+    1004,
+    828,
+    354,
+    51,
+    705,
+    384,
+    31,
+    930,
+    679,
+    456
+  ],
+  "selection_dataset": "MedNIST validation section with deterministic no-cache preprocessing",
+  "score": 0.019326806291937827,
+  "mean_mae": 0.019026217982172966,
+  "per_image_mae": [
+    0.0180550254881382,
+    0.022286206483840942,
+    0.01677503064274788,
+    0.015989411622285843,
+    0.013627889566123486,
+    0.02697235345840454,
+    0.017276041209697723,
+    0.018143586814403534,
+    0.02339186891913414,
+    0.0177447609603405
+  ]
+}
