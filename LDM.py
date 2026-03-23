@@ -1,9 +1,6 @@
 import contextlib
 import time
-from pathlib import Path
 
-import matplotlib.pyplot as plt
-import numpy as np
 import torch
 import torch.nn.functional as F
 from monai.data import DataLoader
@@ -19,12 +16,8 @@ from tqdm.auto import tqdm
 from common import (
     BatchData,
     build_alex_perceptual_loss,
-    collect_latent_vectors,
     get_mednist_dataloaders,
     print_library_versions,
-    save_latent_space_plot,
-    save_metric_panels,
-    save_two_curve_plot,
 )
 from settings import (
     ADVERSARIAL_WEIGHT,
@@ -37,8 +30,6 @@ from settings import (
     DISCRIMINATOR_NUM_LAYERS_D,
     IMAGE_SIZE,
     IN_CHANNELS,
-    INTERMEDIATE_DECODE_DIVISOR,
-    INTERPOLATION_STEPS,
     KL_WEIGHT,
     LATENT_CHANNELS,
     NUM_RES_BLOCKS,
@@ -50,7 +41,7 @@ from settings import (
     WITH_DECODER_NONLOCAL_ATTN,
     WITH_ENCODER_NONLOCAL_ATTN,
 )
-from utils import create_run_directory, ensure_model_type_directories, save_animation_as_gif, save_json, pgcd
+from utils import create_run_directory, ensure_model_type_directories, save_json, pgcd
 
 NORM_NUM_GROUPS = pgcd(*AUTOENCODER_CHANNELS)
 DIFFUSION_LEARNING_RATE = 1e-4
@@ -71,9 +62,6 @@ DIFFUSION_BETA_START = 0.0015
 DIFFUSION_BETA_END = 0.0195
 DIFFUSION_SCHEDULE = "linear_beta"
 DIFFUSION_NUM_INFERENCE_STEPS = 1000
-INTERMEDIATE_DECODE_STEPS = DIFFUSION_NUM_TRAIN_TIMESTEPS // INTERMEDIATE_DECODE_DIVISOR
-
-LATENT_SAMPLE_SHAPE = (1, LATENT_CHANNELS, 16, 16)
 
 
 class LDMComponents:
@@ -400,199 +388,6 @@ class LDMTraining:
 
         return {"epoch_losses": epoch_losses, "val_losses": val_losses}
 
-    @staticmethod
-    def sample_image(
-        autoencoder: AutoencoderKL,
-        unet: DiffusionModelUNet,
-        inferer: LatentDiffusionInferer,
-        scheduler: LDMScheduler,
-        device: torch.device,
-    ) -> torch.Tensor:
-        amp_enabled = device.type == "cuda"
-
-        unet.eval()
-        scheduler.set_timesteps(num_inference_steps=DIFFUSION_NUM_INFERENCE_STEPS)
-        noise = torch.randn(LATENT_SAMPLE_SHAPE, device=device)
-
-        with torch.no_grad():
-            with autocast(device.type, enabled=amp_enabled):
-                decoded = inferer.sample(
-                    input_noise=noise,
-                    diffusion_model=unet,
-                    scheduler=scheduler,
-                    autoencoder_model=autoencoder,
-                )
-
-        return decoded
-
-
-class LDMVisualization:
-    @staticmethod
-    def save_autoencoder_training_plots(plots_dir: Path, metrics: dict[str, list[float]]) -> None:
-        save_metric_panels(
-            output_path=plots_dir / "Diffusion Model - Autoencoder Training Metrics.png",
-            panel_titles=("Reconstruction", "Generator", "Discriminator"),
-            panel_values=(
-                metrics["epoch_recon_losses"],
-                metrics["epoch_gen_losses"],
-                metrics["epoch_disc_losses"],
-            ),
-            y_label="Loss",
-            figsize=(14, 5),
-        )
-
-        if metrics["val_recon_losses"]:
-            x_values = np.arange(
-                AUTOENCODER_VAL_INTERVAL,
-                AUTOENCODER_VAL_INTERVAL * len(metrics["val_recon_losses"]) + 1,
-                AUTOENCODER_VAL_INTERVAL,
-            )
-            save_two_curve_plot(
-                output_path=plots_dir / "Diffusion Model - Autoencoder Train vs Validation Reconstruction.png",
-                x_values=x_values,
-                y_values_1=[metrics["epoch_recon_losses"][epoch - 1] for epoch in x_values],
-                y_values_2=metrics["val_recon_losses"],
-                label_1="Train",
-                label_2="Validation",
-                title="Autoencoder Reconstruction",
-                y_label="Loss",
-            )
-
-        if ADVERSARIAL_WEIGHT > 0:
-            x_values = np.arange(1, len(metrics["epoch_gen_losses"]) + 1)
-            save_two_curve_plot(
-                output_path=plots_dir / "Diffusion Model - Adversarial Training Curves.png",
-                x_values=x_values,
-                y_values_1=metrics["epoch_gen_losses"],
-                y_values_2=metrics["epoch_disc_losses"],
-                label_1="Generator",
-                label_2="Discriminator",
-                title="Adversarial Training Curves",
-                y_label="Loss",
-            )
-
-    @staticmethod
-    def save_diffusion_training_plots(plots_dir: Path, metrics: dict[str, list[float]]) -> None:
-        save_metric_panels(
-            output_path=plots_dir / "Diffusion Model - Diffusion Training Metrics.png",
-            panel_titles=("Diffusion Train Loss",),
-            panel_values=(metrics["epoch_losses"],),
-            y_label="MSE",
-            figsize=(8, 5),
-        )
-
-        if metrics["val_losses"]:
-            x_values = np.arange(
-                DIFFUSION_VAL_INTERVAL,
-                DIFFUSION_VAL_INTERVAL * len(metrics["val_losses"]) + 1,
-                DIFFUSION_VAL_INTERVAL,
-            )
-            save_two_curve_plot(
-                output_path=plots_dir / "Diffusion Model - Diffusion Train vs Validation.png",
-                x_values=x_values,
-                y_values_1=[metrics["epoch_losses"][epoch - 1] for epoch in x_values],
-                y_values_2=metrics["val_losses"],
-                label_1="Train",
-                label_2="Validation",
-                title="Diffusion Denoising MSE",
-                y_label="MSE",
-            )
-
-    @staticmethod
-    def interpolate_latents(
-        autoencoder: AutoencoderKL,
-        latent_1: torch.Tensor,
-        latent_2: torch.Tensor,
-        device: torch.device,
-        steps: int = INTERPOLATION_STEPS,
-    ) -> list[np.ndarray]:
-        latent_1 = latent_1.to(device)
-        latent_2 = latent_2.to(device)
-        t_values = torch.linspace(0, 1, steps, device=device)
-
-        latent_interp = torch.stack([torch.lerp(latent_1, latent_2, t).squeeze(0) for t in t_values], dim=0)
-        decoded_interp = autoencoder.decode(latent_interp)
-
-        return [img.squeeze().detach().cpu().numpy() for img in decoded_interp]
-
-    @staticmethod
-    def save_mednist_interpolation_gif(
-        autoencoder: AutoencoderKL,
-        valid_loader: DataLoader,
-        device: torch.device,
-        plots_dir: Path,
-    ) -> None:
-        autoencoder.eval()
-        dataiter = iter(valid_loader)
-        batch_data: BatchData = next(dataiter)
-        inputs = batch_data["image"].to(device)
-
-        with torch.no_grad():
-            latent_1, _ = autoencoder.encode(inputs[2].unsqueeze(0))
-            latent_2, _ = autoencoder.encode(inputs[4].unsqueeze(0))
-            images = LDMVisualization.interpolate_latents(autoencoder, latent_1, latent_2, device)
-
-        save_animation_as_gif(
-            images=images,
-            filename=plots_dir / "MedNIST Interpolation.gif",
-            interval=100,
-        )
-
-    @staticmethod
-    def save_decoded_intermediates_strip(
-        autoencoder: AutoencoderKL,
-        unet: DiffusionModelUNet,
-        inferer: LatentDiffusionInferer,
-        scheduler: LDMScheduler,
-        device: torch.device,
-        plots_dir: Path,
-    ) -> None:
-        amp_enabled = device.type == "cuda"
-
-        unet.eval()
-        scheduler.set_timesteps(num_inference_steps=DIFFUSION_NUM_INFERENCE_STEPS)
-        noise = torch.randn(LATENT_SAMPLE_SHAPE, device=device)
-
-        with torch.no_grad():
-            with autocast(device.type, enabled=amp_enabled):
-                _, intermediates = inferer.sample(
-                    input_noise=noise,
-                    diffusion_model=unet,
-                    scheduler=scheduler,
-                    save_intermediates=True,
-                    intermediate_steps=INTERMEDIATE_DECODE_STEPS,
-                    autoencoder_model=autoencoder,
-                )
-
-        decoded_images: list[torch.Tensor] = []
-        for intermediate_image in intermediates:
-            decoded_images.append(intermediate_image)
-
-        if not decoded_images:
-            raise ValueError("No decoded intermediates were returned by the inferer.")
-
-        max_columns = 10
-        rows = int(np.ceil(len(decoded_images) / max_columns))
-        columns = int(np.ceil(len(decoded_images) / rows))
-
-        figure, axes = plt.subplots(rows, columns, figsize=(columns * 1.7, rows * 1.7))
-        axes_array = np.array(axes, ndmin=1).ravel()
-
-        for index, image in enumerate(decoded_images):
-            axes_array[index].imshow(image[0, 0].detach().cpu(), vmin=0, vmax=1, cmap="gray")
-            axes_array[index].axis("off")
-
-        for index in range(len(decoded_images), len(axes_array)):
-            axes_array[index].axis("off")
-
-        figure.tight_layout()
-        figure.savefig(
-            plots_dir / "Diffusion Model - Decoded Intermediates Every 100 Steps.png",
-            dpi=300,
-            bbox_inches="tight",
-        )
-        plt.close(figure)
-
 
 if __name__ == "__main__":
     print_library_versions()
@@ -682,7 +477,6 @@ if __name__ == "__main__":
         scaler_d=scaler_d,
         device=device,
     )
-    LDMVisualization.save_autoencoder_training_plots(plots_dir, autoencoder_metrics)
 
     torch.save(autoencoder.state_dict(), models_dir / "autoencoderkl_for_diffusion_state_dict.pth")
 
@@ -712,39 +506,8 @@ if __name__ == "__main__":
         scaler=scaler_unet,
         device=device,
     )
-    LDMVisualization.save_diffusion_training_plots(plots_dir, diffusion_metrics)
 
     torch.save(unet.state_dict(), models_dir / "diffusion_model_unet_state_dict.pth")
-
-    latent_vectors = collect_latent_vectors(valid_loader, device, autoencoder.encode)
-    save_latent_space_plot(
-        latent_vectors=latent_vectors,
-        output_path=plots_dir / "Diffusion Model - Latent Space (t-SNE 2D).png",
-        title="LDM Autoencoder Latent Space (t-SNE 2D)",
-    )
-    LDMVisualization.save_mednist_interpolation_gif(
-        autoencoder=autoencoder,
-        valid_loader=valid_loader,
-        device=device,
-        plots_dir=plots_dir,
-    )
-    LDMVisualization.save_decoded_intermediates_strip(
-        autoencoder=autoencoder,
-        unet=unet,
-        inferer=inferer,
-        scheduler=scheduler,
-        device=device,
-        plots_dir=plots_dir,
-    )
-
-    generated_sample = LDMTraining.sample_image(
-        autoencoder=autoencoder,
-        unet=unet,
-        inferer=inferer,
-        scheduler=scheduler,
-        device=device,
-    )
-    torch.save(generated_sample.detach().cpu(), models_dir / "generated_sample.pt")
 
     metrics = {
         "scale_factor": scale_factor,

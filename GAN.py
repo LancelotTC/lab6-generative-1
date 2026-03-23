@@ -1,9 +1,7 @@
 import contextlib
 import time
-from pathlib import Path
 from typing import Any
 
-import numpy as np
 import torch
 import torch.nn as nn
 from monai.data import DataLoader
@@ -16,12 +14,8 @@ from torchinfo import summary
 from common import (
     BatchData,
     build_alex_perceptual_loss,
-    collect_latent_vectors,
     get_mednist_dataloaders,
     print_library_versions,
-    save_latent_space_plot,
-    save_metric_panels,
-    save_two_curve_plot,
 )
 from settings import (
     ADVERSARIAL_WEIGHT,
@@ -34,7 +28,6 @@ from settings import (
     DISCRIMINATOR_NUM_LAYERS_D,
     IMAGE_SIZE,
     IN_CHANNELS,
-    INTERPOLATION_STEPS,
     KL_WEIGHT,
     LATENT_CHANNELS,
     NUM_EPOCHS,
@@ -47,7 +40,7 @@ from settings import (
     WITH_DECODER_NONLOCAL_ATTN,
     WITH_ENCODER_NONLOCAL_ATTN,
 )
-from utils import create_run_directory, ensure_model_type_directories, save_animation_as_gif, save_json, pgcd
+from utils import create_run_directory, ensure_model_type_directories, save_json, pgcd
 
 # GroupNorm groups used inside the model.
 # Using the first channel count is MONAI's common stable default for this setup.
@@ -327,110 +320,6 @@ class GANTraining:
         return test_metric / len(test_loader.dataset)
 
 
-class GANVisualization:
-    @staticmethod
-    def interpolate_images(
-        model: AutoencoderKL,
-        latent_1: torch.Tensor,
-        latent_2: torch.Tensor,
-        device: torch.device,
-        steps: int = 10,
-    ) -> list[np.ndarray]:
-        latent_1 = latent_1.to(device)
-        latent_2 = latent_2.to(device)
-
-        t_values = torch.linspace(0, 1, steps).to(device)
-        latent_tmp = [torch.lerp(latent_1, latent_2, t).to(device) for t in t_values]
-        latent_interp = torch.stack([latent.squeeze(0) for latent in latent_tmp], dim=0)
-        synthetic_interp = model.decode(latent_interp)
-
-        return [img.squeeze().detach().cpu().numpy() for img in synthetic_interp]
-
-    @staticmethod
-    def save_training_plots(plots_dir: Path, metrics: dict[str, Any]) -> None:
-        panel_titles = (
-            "Training loss curve",
-            "Reconstruction metric",
-            "KL divergence metric",
-            "Perceptual metric",
-            "Adversarial metric",
-        )
-        panel_values = (
-            metrics["train_generator_loss"],
-            metrics["reconstruction_metric"],
-            metrics["kld_metric"],
-            metrics["perceptual_metric"],
-            metrics["adversarial_metric"],
-        )
-
-        save_metric_panels(
-            output_path=plots_dir / "GAN - Training Metrics.png",
-            panel_titles=panel_titles,
-            panel_values=panel_values,
-            y_label="Loss",
-            figsize=(16, 6),
-        )
-
-        if ADVERSARIAL_WEIGHT > 0 and metrics["train_discriminator_loss"]:
-            x_values = np.linspace(1, NUM_EPOCHS, NUM_EPOCHS)
-            generator_values = [x / ADVERSARIAL_WEIGHT for x in metrics["adversarial_metric"]]
-            discriminator_values = [x / ADVERSARIAL_WEIGHT for x in metrics["train_discriminator_loss"]]
-
-            save_two_curve_plot(
-                output_path=plots_dir / "GAN - Adversarial Training Curves.png",
-                x_values=x_values,
-                y_values_1=generator_values,
-                y_values_2=discriminator_values,
-                label_1="Generator",
-                label_2="Discriminator",
-                title="Adversarial Training Curves",
-                y_label="Loss",
-            )
-
-    @staticmethod
-    def run_post_training_visualizations(
-        model: AutoencoderKL,
-        test_loader: DataLoader,
-        device: torch.device,
-        plots_dir: Path,
-    ) -> None:
-        latent_vectors = collect_latent_vectors(test_loader, device, model.encode)
-        save_latent_space_plot(
-            latent_vectors=latent_vectors,
-            output_path=plots_dir / "GAN - Latent Space (t-SNE 2D).png",
-            title="GAN Latent Space (t-SNE 2D)",
-        )
-
-        dataiter = iter(test_loader)
-        _ = next(dataiter)
-        batch_data: BatchData = next(dataiter)
-
-        inputs = batch_data["image"].to(device)
-        input_tensor = inputs[2].unsqueeze(0)
-        z_mu, _ = model.encode(input_tensor)
-
-        print(f"The latent sample is of size {z_mu.shape}")
-
-        reconstruction = model.decode(z_mu)
-        print(f"The reconstructed image is of size {reconstruction.shape}")
-
-        inputs = batch_data["image"].to(device)
-
-        latent_1, _ = model.encode(inputs[2].unsqueeze(0))
-        latent_2, _ = model.encode(inputs[4].unsqueeze(0))
-
-        images = GANVisualization.interpolate_images(
-            model=model,
-            latent_1=latent_1,
-            latent_2=latent_2,
-            device=device,
-            steps=INTERPOLATION_STEPS,
-        )
-        filename = plots_dir / "GAN - Latent Interpolation.gif"
-
-        save_animation_as_gif(images, filename=filename, interval=100)
-
-
 if __name__ == "__main__":
     print_library_versions()
 
@@ -512,8 +401,6 @@ if __name__ == "__main__":
         f"Best model selected at epoch {training_metrics['best_epoch']} with validation loss: {training_metrics['best_valid_metric']:.6f}"
     )
 
-    GANVisualization.save_training_plots(plots_dir, training_metrics)
-
     test_metric = GANTraining.evaluate_test_reconstruction(
         model=model,
         test_loader=test_loader,
@@ -525,14 +412,5 @@ if __name__ == "__main__":
 
     metrics = dict(training_metrics)
     metrics["test_reconstruction_metric"] = test_metric
-    # save_json(metrics, run_dir / "metrics.json")
-
-    GANVisualization.run_post_training_visualizations(
-        model=model,
-        test_loader=test_loader,
-        device=device,
-        plots_dir=plots_dir,
-    )
-
     metrics["run_duration_seconds"] = time.perf_counter() - run_start_time
     save_json(metrics, run_dir / "metrics.json")
